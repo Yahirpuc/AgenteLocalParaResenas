@@ -132,7 +132,7 @@ ollama pull nomic-embed-text
 
 ## B. Dependencias Python
 
-Crea un archivo:
+Instalar los requerimientos:
 
 ```text
 requirements.txt
