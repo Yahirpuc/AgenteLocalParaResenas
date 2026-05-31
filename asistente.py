@@ -16,17 +16,18 @@ class AsistenteAnaliticoHibrido:
         reconstruyendo los nodos e inicializando los modelos de Ollama.
         """
         if not os.path.exists(ruta_db):
-            raise FileNotFoundError(f"[ERROR] No se encontró el almacenamiento persistente en '{ruta_db}'. Ejecute 'indexador.py' primero.")
+            raise FileNotFoundError(f"[ERROR] No se encontró el almacenamiento persistente en '{ruta_db}'. Ejecute 'main.py' con la opción de extracción primero.")
 
         print("[INFO] Cargando modelos locales en memoria (Ollama)...")
         self.embed_model = OllamaEmbedding(model_name="nomic-embed-text")
         self.llm = Ollama(model="qwen2.5:1.5b", request_timeout=120.0)
 
         print("[INFO] Estableciendo conexión con ChromaDB...")
-        db_cliente = chromadb.PersistentClient(path=ruta_db)
+        # CORRECCIÓN PARA WINDOWS: Guardamos el cliente en una variable de clase para cerrarlo después
+        self.db_cliente = chromadb.PersistentClient(path=ruta_db)
         
         # Guardamos la colección nativa de chroma en una variable de la clase
-        self.chroma_collection = db_cliente.get_collection(name=nombre_coleccion)
+        self.chroma_collection = self.db_cliente.get_collection(name=nombre_coleccion)
         
         # Asociación de la base de datos persistente local con LlamaIndex
         self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
@@ -38,7 +39,8 @@ class AsistenteAnaliticoHibrido:
             storage_context=self.storage_context,
             embed_model=self.embed_model
         )
-      #Descargar los textos reales directo de ChromaDB y convertirlos en Nodos de LlamaIndex
+        
+        # Descargar los textos reales directo de ChromaDB y convertirlos en Nodos de LlamaIndex
         print("[INFO] Recuperando documentos de ChromaDB para el motor de palabras clave (BM25)...")
         from llama_index.core.schema import TextNode
         
@@ -51,6 +53,22 @@ class AsistenteAnaliticoHibrido:
                 TextNode(text=texto, id_=id_doc, metadata=metadato)
             )
         print(f"[INFO] Éxito: {len(self.nodos_documentos)} nodos cargados en el motor BM25.")
+
+    def cerrar_conexion(self):
+        """Vacia por completo la colección de ChromaDB de forma interna para evitar bloqueos en Windows"""
+        print("[INFO] Vaciando registros internos de la base de datos de forma segura...")
+        try:
+            # Obtenemos todos los IDs guardados en la base de datos
+            todos_los_datos = self.chroma_collection.get()
+            if todos_los_datos and todos_los_datos['ids']:
+                # Le ordenamos a Chroma que elimine todos los documentos por sus IDs
+                self.chroma_collection.delete(ids=todos_los_datos['ids'])
+                print("[INFO] Colección de ChromaDB vaciada con éxito.")
+            else:
+                print("[INFO] La base de datos ya estaba limpia.")
+        except Exception as e:
+            print(f"[ADVERTENCIA] No se pudo vaciar la colección internamente: {e}")
+
     def consultar(self, pregunta: str, filtro_categoria: str = None, filtro_sentimiento: str = None):
         """
         Ejecuta la recuperación híbrida local real combinando vectores y BM25,
@@ -83,11 +101,14 @@ class AsistenteAnaliticoHibrido:
                 if cumple:
                     nodos_filtrados.append(nodo)
         
+        # Configuración dinámica de top_k para evitar Warnings si quedan pocos documentos
+        top_k_dinamico = min(5, len(nodos_filtrados)) if nodos_filtrados else 5
+
         # Si el filtro dejó vacío al BM25, usamos un fallback seguro para que no truene
         if not nodos_filtrados:
             retriever_bm25 = retriever_vectorial
         else:
-            retriever_bm25 = BM25Retriever.from_defaults(nodes=nodos_filtrados, similarity_top_k=5)
+            retriever_bm25 = BM25Retriever.from_defaults(nodes=nodos_filtrados, similarity_top_k=top_k_dinamico)
         
         # 3. Fusión Híbrida Real
         try:
@@ -106,19 +127,19 @@ class AsistenteAnaliticoHibrido:
                 llm=self.llm
             )
 
-        # 4. Plantilla de Prompt Estricta para el Sintetizador
+        # 4. Plantilla de Prompt Optimizada contra Alucinaciones (Formato ChatML directo para Qwen)
+      # Plantilla de Prompt Optimizada y Blindada (Sintaxis ChatML Correcta)
         plantilla_QA = (
-            "Actúa como un Consultor de Producto y Analista de Datos experto. Tu objetivo es responder la pregunta del usuario utilizando ÚNICAMENTE la información verídica y específica extraída de las reseñas proporcionadas en el contexto.\n"
-            "---------------------\n"
-            "CONTEXTO DE RESEÑAS INDEXADAS:\n"
-            "{context_str}\n"
-            "---------------------\n"
-            "Normas estrictas de análisis:\n"
-            "1. Si los datos recuperados mencionan problemas explícitos, anomalías o componentes faltantes (ej. ausencia de cables de carga, retrasos logísticos, fallas estéticas o de conectividad), enuméralos con precisión y fundamenta tu respuesta en la reseña correspondiente.\n"
-            "2. Si la información recuperada no contiene datos suficientes para responder a la duda del cliente, responde textualmente de forma obligatoria: 'No se cuenta con registros suficientes en las opiniones indexadas para responder a esta consulta específica'. No asumas, no inventes historias de parejas ni metas datos de otros contextos.\n"
-            "3. Mantén un tono técnico, objetivo, profesional y estructurado.\n\n"
-            "Pregunta de análisis: {query_str}\n"
-            "Respuesta:"
+            "<|im_start|>system\n"
+            "Actúa como un Consultor de Producto y Analista Técnico experto. Tu única tarea es responder la consulta del usuario utilizando ÚNICAMENTE el contexto de reseñas provisto. "
+            "Sé directo, frío, objetivo y estructurado en tu análisis. No asumas, no extrapoles ni inventes características o quejas que no estén escritas textualmente.\n"
+            "REGLA DE ORO HÍBRIDA: Préstale especial atención tanto al contexto general de las opiniones como a los términos o palabras clave exactas que el usuario está buscando.\n"
+            "REGLA CRÍTICA DE FRONTERA: Si el contexto está vacío, no contiene datos suficientes o no responde directamente a la pregunta, debes contestar EXACTAMENTE con esta frase, sin añadir nada más:\n"
+            "'No se cuenta con registros suficientes en las opiniones indexadas para responder a esta consulta específica.'\n"
+            "CONTEXTO DE RESEÑAS:\n{context_str}<|im_end|>\n"
+            "<|im_start|>user\n"
+            "Pregunta de análisis: {query_str}<|im_end|>\n"
+            "<|im_start|>assistant\n"
         )
         
         text_qa_template = PromptTemplate(plantilla_QA)
@@ -147,14 +168,14 @@ if __name__ == "__main__":
     print("="*70)
     print("Instrucciones: Introduzca consultas abiertas o utilice comandos de filtro.")
     print("Comandos disponibles:")
-    print("  /interfaz   - Filtra exclusivamente análisis de Diseño e Interfaz")
-    print("  /funcionalidad    - Filtra exclusivamente análisis de Funcionalidad")
-    print("  /general  - Aísla únicamente quejas e inconformidades generales sin importar categoría")
+    print("  /interfaz       - Filtra exclusivamente análisis de Diseño e Interfaz")
+    print("  /funcionalidad  - Filtra exclusivamente análisis de Funcionalidad")
+    print("  /general        - Aísla únicamente quejas e inconformidades generales")
     print("Para cerrar la sesión, escriba 'salir'.")
     print("="*70 + "\n")
 
     while True:
-        entrada = input("Pregunta lo que quieras > ").strip()
+        entrada = input("Pregunta sobre las reseñas > ").strip()
         
         if entrada.lower() in ["salir", "exit", "quit"]:
             print("[INFO] Finalizando sesión del asistente analítico local.")
@@ -179,9 +200,9 @@ if __name__ == "__main__":
             print(f"[FILTRO APLICADO] Restringido a categoría: {cat_filtro}")
             
         elif entrada.startswith("/general"):
-            sent_filtro = "General"
+            cat_filtro = "General"
             pregunta_final = "Identifica de forma detallada la totalidad de quejas, inconformidades y defectos reportados por los usuarios."
-            print(f"[FILTRO APLICADO] Restringido a sentimiento: {sent_filtro}")
+            print(f"[FILTRO APLICADO] Restringido a categoría: {cat_filtro}")
 
         print("[PROCESAMIENTO] Consultando índices híbridos y generando respuesta...")
         
