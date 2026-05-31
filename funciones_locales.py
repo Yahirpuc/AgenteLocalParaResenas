@@ -102,7 +102,7 @@ def calcular_promedio_estrellas() -> str:
     Lee de forma directa el JSON crudo de reseñas para calcular el promedio matemático exacto de estrellas.
     
     Returns:
-        str: Cadena de texto con el resultado del promedio exacto obtenido de las opiniones.
+        str: Cadena de texto con el resultado del promedio exacto obtenido de las opiniones de los clientes.
     """
     origen_json = "reseñas_enriquecidas.json"
     if not os.path.exists(origen_json):
