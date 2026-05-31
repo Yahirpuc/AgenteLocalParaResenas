@@ -4,62 +4,56 @@ Sistema profesional de procesamiento y análisis de lenguaje natural orientado a
 
 El proyecto opera bajo un entorno **100% local, privado y sin dependencias de APIs externas**, garantizando:
 
-- Máxima confidencialidad de datos
-- Costo operativo cero
-- Persistencia local de embeddings y sesiones
-- Inferencia completamente offline mediante Ollama
+* Máxima confidencialidad de datos
+* Costo operativo cero
+* Persistencia local de embeddings y sesiones
+* Inferencia completamente offline mediante Ollama
 
 ---
 
 # 🏗️ 1. Arquitectura General y Flujo de Datos
 
-El pipeline está desacoplado en cuatro fases independientes para optimizar memoria RAM, escalabilidad y mantenimiento.
+El pipeline está completamente unificado y automatizado a través de un orquestador central que administra el ciclo de vida de los datos sin requerir ejecuciones manuales por separado.
 
 ```text
-[extractor.py]
-│
-▼
-(reseñas_crudas.json)
-
-[clasificador.py]
-│
-▼
-(reseñas_enriquecidas.json)
-
-[indexador.py]
-│
-▼
-(chroma_db/)
-
-[asistente.py]
+               ┌──────────────────────────────┐
+               │         python main.py       │
+               └──────────────┬───────────────┘
+                              │
+            [¿Existe Base de Datos Vectorial?]
+               /                             \
+        (No / Opción /reiniciar)            (Sí)
+             /                                 \
+            ▼                                   ▼
+   [extractor.py (Universal)]          [asistente.py (Chat Local)]
+            │                                   ▲
+            ▼                                   │
+(reseñas_enriquecidas.json)                     │
+            │                                   │
+            ▼                                   │
+  [indexador.py (ChromaDB)] ────────────────────┘
 ```
 
 ## Componentes
 
-### `extractor.py`
-Responsable de:
+### `main.py` (Orquestador Central)
 
-- Automatización con Playwright
-- Persistencia de sesiones autenticadas
-- Extracción de opiniones
-- Mitigación de bloqueos y captchas
+Punto de entrada unificado del sistema. Se encarga de:
 
-Produce:
-
-```text
-reseñas_crudas.json
-```
+* Verificar de forma inteligente si ya existen datos indexados previamente para saltar directo al asistente en menos de 3 segundos.
+* Controlar el flujo automatizado entre la extracción de datos, la inyección en la base de datos vectorial y la apertura de la interfaz del chat.
+* Administrar el comando avanzado `/reiniciar`, el cual purga las colecciones internas *in-place* de forma segura, evitando bloqueos de permisos con Windows (`WinError 32`) y permitiendo cambiar de URL al vuelo.
 
 ---
 
-### `clasificador.py`
+### `extractor.py` (Motor Universal Heurístico)
 
-Motor de enriquecimiento semántico mediante:
+Responsable de:
 
-- `qwen2.5:1.5b`
-- Inferencia local con Ollama
-- Clasificación por sentimiento
-- Categorización analítica
+* Analizar el DOM de cualquier página web de forma semántica al vuelo, sin depender de selectores CSS fijos.
+* Aislar bloques de texto mediante densidad de caracteres.
+* Extraer autores, opiniones y puntuaciones mediante expresiones regulares.
+* Mantener sesiones autenticadas utilizando el directorio aislado `sesion_playwright`, evitando inicios de sesión repetitivos y captchas en plataformas como Amazon o Mercado Libre.
 
 Produce:
 
@@ -73,16 +67,16 @@ reseñas_enriquecidas.json
 
 Responsable de:
 
-- Formateo blindado de contexto
-- Generación de embeddings
-- Persistencia vectorial en ChromaDB
-- Limpieza automática de registros obsoletos
+* Formatear el contexto utilizando delimitadores estrictos para evitar contaminación entre documentos.
+* Generar embeddings vectoriales locales.
+* Inyectar los datos en ChromaDB.
+* Limpiar colecciones anteriores para evitar duplicados.
 
-Utiliza:
+Tecnologías utilizadas:
 
-- `nomic-embed-text`
-- `ChromaDB`
-- `LlamaIndex`
+* `nomic-embed-text`
+* `ChromaDB`
+* `LlamaIndex`
 
 Persistencia:
 
@@ -94,12 +88,23 @@ Persistencia:
 
 ### `asistente.py`
 
-Interfaz conversacional RAG híbrida:
+Interfaz conversacional RAG híbrida que combina:
 
-- Recuperación vectorial semántica
-- Búsqueda BM25 lexical
-- Routing por comandos
-- Respuestas controladas anti-alucinación
+#### Recuperación Vectorial
+
+Captura el sentido semántico y el contexto general mediante embeddings.
+
+#### Búsqueda BM25 Lexical
+
+Captura palabras clave, términos y marcas exactas letra por letra.
+
+#### Fusión Híbrida
+
+Implementa **Reciprocal Rank Fusion (RRF)** para combinar los resultados de ambos recuperadores y mejorar la precisión.
+
+#### Routing por Metadatos
+
+Filtra el contexto antes de realizar la búsqueda para aislar categorías específicas de forma estricta.
 
 ---
 
@@ -107,10 +112,10 @@ Interfaz conversacional RAG híbrida:
 
 ## A. Ollama (Obligatorio)
 
-Este proyecto requiere tener instalado:
+Este proyecto requiere:
 
-- Ollama
-- Servicio activo en segundo plano
+* Ollama instalado.
+* Servicio de Ollama ejecutándose en segundo plano.
 
 Sitio oficial:
 
@@ -118,13 +123,13 @@ Sitio oficial:
 https://ollama.com/
 ```
 
-Descarga los modelos necesarios:
+Descargar los modelos necesarios:
 
 ```bash
-# Modelo de inferencia y clasificación
+# Modelo de inferencia y chat
 ollama pull qwen2.5:1.5b
 
-# Modelo de embeddings semánticos
+# Modelo de embeddings
 ollama pull nomic-embed-text
 ```
 
@@ -132,7 +137,7 @@ ollama pull nomic-embed-text
 
 ## B. Dependencias Python
 
-Contenido:
+Instalar:
 
 ```text
 chromadb>=0.4.0
@@ -140,6 +145,9 @@ llama-index-core
 llama-index-vector-stores-chroma
 llama-index-embeddings-ollama
 llama-index-llms-ollama
+llama-index-retrievers-bm25
+bm25s
+rank_bm25
 playwright
 ```
 
@@ -157,7 +165,7 @@ python -m venv venv
 
 ## Activar entorno virtual
 
-### Windows / PowerShell
+### Windows (PowerShell)
 
 ```bash
 .\venv\Scripts\Activate.ps1
@@ -187,122 +195,77 @@ playwright install
 
 ---
 
-# 📦 4. Ejecución del Pipeline
+# 📦 4. Ejecución del Pipeline Unificado
 
----
-
-## Paso 1 — Extracción de Opiniones
+Todo el proceso está centralizado en un único comando:
 
 ```bash
-python extractor.py
+python main.py
 ```
 
-### ⚠️ Importante — Sesión Visual de Playwright
+## Flujo Automatizado
 
-Al ejecutar este módulo:
+### Primera ejecución
 
-- Se abrirá un navegador controlado por Playwright
-- NO debes cerrarlo manualmente
-- Está diseñado para:
-  - Login manual
-  - Resolución de captchas
-  - Verificaciones de identidad
+1. El sistema detecta que no existen índices guardados.
+2. Solicita la URL del producto.
+3. Inicia Playwright.
 
-Una vez autenticado:
+### Pausa de Control Manual
 
-- La sesión será persistida localmente
-- El scraping continuará automáticamente
+1. Navega hasta la sección de reseñas.
+2. Deja visibles las opiniones.
+3. Espera unos segundos para estabilizar el DOM.
+4. Presiona `ENTER` en la terminal.
 
----
+### Indexación automática
 
-## Paso 2 — Clasificación y Enriquecimiento IA
+1. El extractor recopila el contenido.
+2. El indexador genera embeddings.
+3. Se almacenan en ChromaDB.
+4. Se abre automáticamente el asistente conversacional.
 
-```bash
-python clasificador.py
-```
+### Ejecuciones posteriores
 
-Este módulo:
+Si la base vectorial ya existe:
 
-- Procesa opiniones por lotes
-- Ejecuta inferencia local
-- Genera metadatos analíticos
-- No utiliza APIs externas
-
----
-
-## Paso 3 — Indexación Vectorial
-
-```bash
-python indexador.py
-```
-
-Este proceso:
-
-- Elimina registros obsoletos
-- Reconstruye ChromaDB
-- Genera embeddings semánticos
-- Inserta delimitadores estrictos de contexto
-
-Ejemplo de estructura blindada:
-
-```text
-AUTOR:
-Juan Pérez
-
-TEXTO DE LA OPINIÓN:
-"La batería dura muy poco..."
-```
-
-Esto evita:
-
-- Mezcla de autores
-- Contaminación contextual
-- Respuestas cruzadas incorrectas
+* Se omite el raspado.
+* Se omite la indexación.
+* Se abre directamente el chat local en pocos segundos.
 
 ---
 
 # 🎮 5. Uso del Asistente Analítico
 
-Inicia la consola interactiva:
-
-```bash
-python asistente.py
-```
-
-Cuando aparezca:
+Cuando el sistema esté listo aparecerá:
 
 ```text
 escribe lo que quieres preguntar >
 ```
 
-Puedes realizar:
+El usuario puede realizar consultas abiertas aprovechando la combinación de búsqueda semántica y lexical.
 
-- Consultas abiertas en lenguaje natural
-- Filtros semánticos directos
-- Búsquedas por categoría o sentimiento
+El modelo está restringido para responder únicamente utilizando la información contenida en el contexto recuperado.
 
 ---
 
 # ⚡ 6. Comandos Integrados
 
-| Comando | Función Técnica | Objetivo |
-|---|---|---|
-| `/interfaz` | `categoria == "Diseño e Interfaz"` | Analiza estética, ergonomía y acabados visuales |
-| `/funcion` | `categoria == "Funcionalidad"` | Evalúa desempeño operativo y hardware |
-| `/negativos` | `sentimiento == "Negativo"` | Detecta quejas y defectos críticos |
-| `salir` | Finaliza la sesión | Libera memoria y termina Ollama |
+| Comando      | Función Técnica                       | Objetivo                                                         |
+| ------------ | ------------------------------------- | ---------------------------------------------------------------- |
+| `/interfaz`  | `categoria == "Diseño e Interfaz"`    | Reporte analítico sobre percepción visual, ergonomía y acabados  |
+| `/funcion`   | `categoria == "Rendimiento y Caídas"` | Reporte técnico enfocado en rendimiento operativo y conectividad |
+| `/negativos` | `sentimiento == "Negativo"`           | Identificación detallada de quejas reportadas                    |
+| `/reiniciar` | `asistente.cerrar_conexion()`         | Vacía la base vectorial y solicita una nueva URL                 |
+| `salir`      | Finaliza la sesión                    | Libera recursos y cierra Ollama                                  |
 
 ---
 
 # 🛡️ 7. Sistema Anti-Alucinación
 
-El motor RAG incorpora un prompt sistémico restrictivo que:
+El sistema incorpora un prompt estricto bajo el estándar ChatML.
 
-- Prohíbe inferencias no verificadas
-- Impide fabricación de datos
-- Exige evidencia recuperada desde ChromaDB
-
-Si no existen suficientes registros válidos, el sistema responderá:
+Si la información solicitada no existe dentro del contexto recuperado, la respuesta obligatoria será:
 
 > "No se cuenta con registros suficientes en las opiniones indexadas para responder a esta consulta específica."
 
@@ -313,18 +276,17 @@ Si no existen suficientes registros válidos, el sistema responderá:
 ```text
 proyecto-rag/
 │
+├── main.py
 ├── extractor.py
-├── clasificador.py
 ├── indexador.py
 ├── asistente.py
 │
-├── reseñas_crudas.json
 ├── reseñas_enriquecidas.json
 │
 ├── chroma_db/
+├── sesion_playwright/
 │
 ├── requirements.txt
-│
 └── venv/
 ```
 
@@ -332,40 +294,39 @@ proyecto-rag/
 
 # 🔒 Características Clave
 
-- 100% Local
-- Sin APIs externas
-- Persistencia en disco
-- Embeddings privados
-- Motor híbrido RAG + BM25
-- Playwright persistente
-- ChromaDB vectorial
-- Inferencia offline con Ollama
-- Arquitectura desacoplada
-- Protección anti-alucinación
+* **100% Local y Privado**
+* **Costo Operativo Cero**
+* **Procesamiento Offline**
+* **Embeddings Locales**
+* **Buscador Híbrido Vectorial + BM25**
+* **Persistencia de Sesiones con Playwright**
+* **Recuperación Semántica de Alta Precisión**
+* **Vaciado Seguro de Índices en Windows**
+* **Arquitectura RAG Empresarial Offline**
 
 ---
 
 # 📌 Stack Tecnológico
 
-| Tecnología | Función |
-|---|---|
-| Ollama | Inferencia local |
-| Qwen2.5 | Clasificación NLP |
-| nomic-embed-text | Embeddings |
-| ChromaDB | Base vectorial |
-| LlamaIndex | Orquestación RAG |
-| Playwright | Automatización web |
-| Python | Backend principal |
+| Tecnología       | Función                   |
+| ---------------- | ------------------------- |
+| Ollama           | Inferencia local          |
+| Qwen2.5:1.5b     | Generación y análisis NLP |
+| nomic-embed-text | Embeddings vectoriales    |
+| ChromaDB         | Base de datos vectorial   |
+| LlamaIndex       | Orquestación RAG          |
+| BM25             | Recuperación lexical      |
+| Playwright       | Automatización web        |
+| Python           | Backend principal         |
 
 ---
 
 # ✅ Estado del Proyecto
 
-Sistema preparado para:
+Actualmente preparado para:
 
-- Analítica de reseñas
-- Inteligencia de producto
-- Minería de opiniones
-- Detección de problemas recurrentes
-- Estudios de percepción de usuarios
-- Sistemas RAG privados empresariales
+* Analítica universal de reseñas en plataformas de comercio electrónico.
+* Sistemas RAG privados empresariales.
+* Entornos sin dependencia de servicios externos.
+* Procesamiento local de lenguaje natural con costo operativo cero.
+* Recuperación híbrida semántica y lexical de alta precisión.
