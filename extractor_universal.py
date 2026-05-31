@@ -1,6 +1,5 @@
 import json
 import os
-import re
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
@@ -20,8 +19,8 @@ class ExtractorUniversal:
         datos_existentes.extend(nuevos_datos)
         with open(self.archivo_salida, "w", encoding="utf-8") as f:
             json.dump(datos_existentes, f, ensure_ascii=False, indent=4)
-        print(f"\n💾 Éxito: Se extrajeron {len(nuevos_datos)} reseñas reales.")
-        print(f"📊 Total acumulado en archivo: {len(datos_existentes)} elementos.")
+        print(f"\nNota: Se extrajeron {len(nuevos_datos)} reseñas reales.")
+        print(f"Total acumulado en archivo: {len(datos_existentes)} elementos.")
 
     def extraer(self, url: str, scrolls: int = 3):
         print(f"\n🚀 Iniciando navegador universal en modo inteligente...")
@@ -49,7 +48,6 @@ class ExtractorUniversal:
                 
                 input("\n⌨️ Presiona [ENTER] aquí en la terminal cuando los comentarios estén en pantalla...")
 
-                # CRÍTICO: Esperamos a que el nuevo contexto/página se estabilice tras tus clics manuales
                 print("\n🔄 Sincronizando estado de la página...")
                 page.wait_for_load_state("domcontentloaded")
                 page.wait_for_timeout(1000)
@@ -60,31 +58,50 @@ class ExtractorUniversal:
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
                     page.wait_for_timeout(2500)
 
-                # --- ALGORITMO HEURÍSTICO UNIVERSAL ---
-                # Analiza la estructura semántica de cualquier sitio web al vuelo
-                print("[PROCESAMIENTO] Analizando el DOM en busca de patrones de comentarios...")
+                # --- ALGORITMO HEURÍSTICO UNIVERSAL OPTIMIZADO ---
+                print("[PROCESAMIENTO] Analizando el DOM con filtros de exclusión de interfaz...")
                 
                 script_heuristico = """
                 () => {
                     let resultados = [];
-                    // Buscar elementos de texto que coincidan con etiquetas de reseñas comunes
+                    
+                    // 1. Filtro estricto: selectores CSS comunes que guardan textos de opiniones
                     let elementosTexto = document.querySelectorAll('p, span, div.review-text, .comment-text, [class*="comment" i], [class*="review" i]');
                     
                     let index = 0;
                     elementosTexto.forEach(el => {
                         let texto = el.innerText ? el.innerText.trim() : "";
-                        // Filtro de longitud para asegurar consistencia de contenido analítico
-                        if (texto.length > 25 && texto.length < 1200) {
+                        
+                        // 2. Ignorar cadenas de texto demasiado cortas o excesivamente largas (Menús vs Ensayos)
+                        if (texto.length > 20 && texto.length < 1500) {
                             
-                            // Intentamos rastrear un contenedor padre inmediato que agrupe la reseña
+                            // 3. FILTRO ANTI-INTERFAZ: Validamos si el texto pertenece a un menú de sistema conocido
+                            let textoUpper = texto.toUpperCase();
+                            let palabrasBasura = [
+                                "ORDENAR POR", "FILTRAR POR", "MÉTODOS ABREVIADOS", "COMPRADOR ANÓNIMO", 
+                                "MEMBRESÍAS", "ALERTAS DE REVISIÓN", "INICIAR SESIÓN", "REGISTRARTE", 
+                                "ENVÍO NACIONAL", "CARRITO DE COMPRAS", "CANTIDAD ES 1", "SELECCIONAR ELIMINAR",
+                                "VENDER EN", "CONDICIONES DE USO", "AVISO DE PRIVACIDAD", "TODOS LOS DERECHOS"
+                            ];
+                            
+                            if (palabrasBasura.some(basura => textoUpper.includes(basura))) {
+                                return; // Salta este elemento porque es basura de la interfaz
+                            }
+
+                            // 4. Intentamos rastrear un contenedor padre inmediato que agrupe la reseña legítima
                             let contenedor = el.closest('article, li, [class*="item" i], [class*="review" i], [class*="comment" i]') || el.parentElement;
                             
-                            // Buscar métricas de calificación (estrellas o puntuaciones) en la vecindad del nodo
+                            // Si el contenedor padre pertenece al header o footer de la página, lo descartamos de inmediato
+                            if (contenedor && contenedor.closest('header, footer, nav, #nav-belt, #nav-main, .nav-sprite')) {
+                                return;
+                            }
+
+                            // Buscar métricas de calificación (estrellas) en la vecindad del nodo
                             let estrellas = null;
                             let textoContenedor = contenedor ? contenedor.innerText : "";
                             let matchEstrellas = textoContenedor.match(/([1-5])\s*(de|=)?\s*5|★+/g);
                             if (matchEstrellas) {
-                                let num = matchEstrav = matchEstrellas[0].match(/[1-5]/);
+                                let num = matchEstrellas[0].match(/[1-5]/);
                                 estrellas = num ? parseInt(num[0]) : (matchEstrellas[0].includes('★') ? matchEstrellas[0].length : null);
                             }
 
@@ -92,7 +109,11 @@ class ExtractorUniversal:
                             let autor = "Comprador Anónimo";
                             let elAutor = contenedor ? contenedor.querySelector('[class*="author" i], [class*="user" i], [class*="name" i]') : null;
                             if (elAutor && elAutor.innerText.trim().length < 50) {
-                                autor = elAutor.innerText.trim();
+                                let nombreAutor = elAutor.innerText.trim();
+                                // Evitamos que el autor se llame como un botón del sistema
+                                if (!palabrasBasura.some(basura => nombreAutor.toUpperCase().includes(basura))) {
+                                    autor = nombreAutor;
+                                }
                             }
 
                             // Filtrar duplicados redundantes del DOM antes de consolidar
@@ -117,11 +138,11 @@ class ExtractorUniversal:
                 dominio = url.split("//")[-1].split("/")[0].replace("www.", "")
                 plataforma_id = dominio.split(".")[0]
 
-                # --- CONSOLIDACIÓN COMPATIBLE CON TU INDEXADOR ---
-                dominio = url.split("//")[-1].split("/")[0].replace("www.", "")
-                plataforma_id = dominio.split(".")[0]
-
                 for op in opiniones_detectadas:
+                    # Filtro final de sanidad en Python: El autor no puede ser idéntico al texto
+                    if op["autor"].strip() == op["texto"].strip():
+                        continue
+
                     reseñas_raspadas.append({
                         "id": f"{plataforma_id}_{datetime.now().strftime('%M%S')}_{op['index']}",
                         "autor": op["autor"],
