@@ -30,18 +30,6 @@ def iniciar_flujo_completo():
     else:
         print("\n[INFO] Base de datos local detectada. Accediendo directamente al asistente...")
 
-    # Registro y empaquetamiento modular a herramientas de LlamaIndex (Fase 2)
-    herramientas_fc = [
-        FunctionTool.from_defaults(fn=funciones_locales.guardar_reporte_txt),
-        FunctionTool.from_defaults(fn=funciones_locales.exportar_analisis_csv),
-        FunctionTool.from_defaults(fn=funciones_locales.listar_archivos_reportes),
-        FunctionTool.from_defaults(fn=funciones_locales.calcular_promedio_estrellas),
-        FunctionTool.from_defaults(fn=funciones_locales.contar_sentimientos_totales),
-        FunctionTool.from_defaults(fn=funciones_locales.obtener_reseña_mas_critica),
-        FunctionTool.from_defaults(fn=funciones_locales.obtener_diagnostico_sistema),
-        FunctionTool.from_defaults(fn=funciones_locales.limpiar_cache_scraping)
-    ]
-
     # BUCLE PRINCIPAL DE CONTROL (Mantiene el orquestador vivo para iterar múltiples URLs)
     while True:
         if ejecutar_extraccion:
@@ -112,14 +100,14 @@ def iniciar_flujo_completo():
                 continue
 
         print("\n" + "="*70)
-        print("ENTORNO HÍBRIDO ACTIVO CON LLAMADAS A FUNCIÓN (FASE 2)")
+        print("ENTORNO HÍBRIDO ACTIVO CON INTERCEPCIÓN DETERMINISTA (FASE 2)")
         print("="*70)
         print(" FILTROS RAG (PREFIJOS DIRECTOS):")
         print("  /interfaz      -> Aísla la categoría de Diseño y Estética del producto.")
         print("  /funcion       -> Filtra el Rendimiento Técnico y fallas de hardware.")
         print("  /negativos     -> Enfoca el contexto únicamente en opiniones críticas.")
         print("-" * 70)
-        print(" CATÁLOGO DE ACCIONES DISPONIBLES (FUNCTION CALLING INTERCEPTADO):")
+        print(" CATÁLOGO DE ACCIONES DISPONIBLES (EJECUCIÓN DIRECTA):")
         print("  1. 'Guarda el reporte en un archivo txt' (Ejecuta guardar_reporte_txt)")
         print("  2. 'Exporta las opiniones a CSV'        (Ejecuta exportar_analisis_csv)")
         print("  3. 'Muestra la lista de reportes'       (Ejecuta listar_archivos_reportes)")
@@ -127,7 +115,7 @@ def iniciar_flujo_completo():
         print("  5. 'Cuenta los sentimientos totales'    (Ejecuta contar_sentimientos_totales)")
         print("  6. 'Muestra la reseña más crítica'      (Ejecuta obtener_reseña_mas_critica)")
         print("  7. 'Dame el diagnóstico del sistema'    (Ejecuta obtener_diagnostico_sistema)")
-        print("  8. 'Limpia el cache de scraping'        (Ejecuta limpiar_cache_scraping)")
+   
         print("-" * 70)
         print(" COMANDOS DE CONTROL GLOBAL:")
         print("  /reiniciar     -> Purga la base vectorial in-place y pide otra URL.")
@@ -135,8 +123,11 @@ def iniciar_flujo_completo():
         print("="*70 + "\n")
 
         bandera_reinicio = False
+        
+        # Inicializamos el respaldo del reporte en la sesión actual
+        ultimo_informe_rag = "No se ha generado ningún informe en esta sesión todavía. Realiza una consulta analítica primero."
 
-        # BUCLE INTERACTIVO DEL CHAT
+        # UN SOLO BUCLE INTERACTIVO DEL CHAT CONTROLADO
         while True:
             entrada = input("Pregunta sobre las reseñas...> ").strip()
             
@@ -147,32 +138,29 @@ def iniciar_flujo_completo():
             if not entrada:
                 continue
 
-            # SOLUCIÓN RADICAL CONTROLADA PARA WINDOWS: Vaciado in-place sin eliminar directorios
+            # SOLUCIÓN CONTROLADA PARA REINICIOS
             if entrada.startswith("/reiniciar"):
                 print("\n" + "-" * 70)
                 print("[REINICIO] Vaciando índices y preparando entorno para nuevo producto...")
                 print("-" * 70)
-                
-                # 1. Forzamos a ChromaDB a purgar la colección internamente
                 try:
                     asistente.cerrar_conexion()
                 except Exception as e:
                     print(f"[ADVERTENCIA] Error en la rutina de limpieza: {e}")
                 
-                # 2. Eliminación física de los JSON viejos para arrancar limpios
                 if os.path.exists(archivo_crudo): os.remove(archivo_crudo)
                 if os.path.exists(archivo_enriquecido): os.remove(archivo_enriquecido)
                 
                 print("[INFO] Base de datos e historial limpios con éxito.")
                 ejecutar_extraccion = True
                 bandera_reinicio = True
-                break # Rompe este bucle interno y nos regresa a la solicitud de URL
+                break 
 
             cat_filtro = None
             sent_filtro = None
             pregunta_final = entrada
 
-            # Enrutamiento lógico de comandos por metadatos estructurados
+            # Enrutamiento lógico de comandos por metadatos (Filtros rápidos)
             if entrada.startswith("/interfaz"):
                 cat_filtro = "Diseño e Interfaz"
                 pregunta_final = "Genera un reporte analítico sobre la percepción visual, ergonomía, estética y acabados del producto."
@@ -188,34 +176,76 @@ def iniciar_flujo_completo():
                 pregunta_final = "Identifica de forma detallada la totalidad de quejas e inconformidades reportadas."
                 print(f"[FILTRO APLICADO] Sentimiento: {sent_filtro}")
 
-            # Intercepción Inteligente de Intenciones (Fase 2)
-            print("[PROCESAMIENTO] Analizando intención (RAG Híbrido vs Tool Selection)...")
-            
-            intentar_fc = any(palabra in entrada.lower() for palabra in ["guardar", "txt", "csv", "exportar", "promedio", "estrellas", "conteo", "sentimientos", "crítica", "peor", "diagnóstico", "sistema", "limpiar", "cache", "archivos", "listar"])
+            print("[PROCESAMIENTO] Analizando intención (RAG Híbrido vs Local Interception)...")
+            entrada_lower = entrada.lower()
             
             try:
-                if intentar_fc:
-                    # El LLM evalúa los metadatos expuestos, intercepta la ejecución y procesa localmente
-                    respuesta_funcion = asistente.llm.predict_and_call(
-                        herramientas_fc, 
-                        user_msg=entrada,
-                        allow_parallel_tool_calls=False
+                # ─── EVALUACIÓN DETERMINISTA DE FUNCIONES LOCALES (FASE 2) ───
+                
+                # [ACCIÓN 1] GUARDAR REPORTE EN TXT
+                if any(p in entrada_lower for p in ["guardar", "txt", "guardar reporte"]) or entrada_lower == "1":
+                    nombre_out = input("Introduce el nombre del archivo (por defecto: reporte_analisis.txt) > ").strip()
+                    if not nombre_out: 
+                        nombre_out = "reporte_analisis.txt"
+                    
+                    resultado_funcion = funciones_locales.guardar_reporte_txt(
+                        contenido=str(ultimo_informe_rag), 
+                        nombre_archivo=nombre_out
                     )
-                    print(f"\n[INTERCEPCIÓN DE FUNCIÓN EJECUTADA EN BACKEND]\n{respuesta_funcion}\n")
+                    print(f"\n[INTERCEPCIÓN] Ejecutando guardar_reporte_txt de forma local:\n{resultado_funcion}\n")
+
+                # [ACCIÓN 2] EXPORTAR OPINIONES A CSV
+                elif any(p in entrada_lower for p in ["csv", "exportar", "opiniones a csv"]) or entrada_lower == "2":
+                    resultado_funcion = funciones_locales.exportar_analisis_csv()
+                    print(f"\n[INTERCEPCIÓN] Ejecutando exportar_analisis_csv:\n{resultado_funcion}\n")
+
+                # [ACCIÓN 3] LISTAR ARCHIVOS DE REPORTES
+                elif any(p in entrada_lower for p in ["lista de reportes", "listar", "archivos", "mostrar reportes"]) or entrada_lower == "3":
+                    resultado_funcion = funciones_locales.listar_archivos_reportes()
+                    print(f"\n[INTERCEPCIÓN] Ejecutando listar_archivos_reportes:\n{resultado_funcion}\n")
+
+                # [ACCIÓN 4] CALCULAR PROMEDIO DE ESTRELLAS
+                elif any(p in entrada_lower for p in ["promedio", "estrellas", "calcular promedio"]) or entrada_lower == "4":
+                    resultado_funcion = funciones_locales.calcular_promedio_estrellas()
+                    print(f"\n[INTERCEPCIÓN] Ejecutando calcular_promedio_estrellas:\n{resultado_funcion}\n")
+
+                # [ACCIÓN 5] CONTAR SENTIMIENTOS TOTALES
+                elif any(p in entrada_lower for p in ["sentimientos", "conteo", "sentimientos totales"]) or entrada_lower == "5":
+                    resultado_funcion = funciones_locales.contar_sentimientos_totales()
+                    print(f"\n[INTERCEPCIÓN] Ejecutando contar_sentimientos_totales:\n{resultado_funcion}\n")
+
+                # [ACCIÓN 6] MOSTRAR LA RESEÑA MÁS CRÍTICA
+                elif any(p in entrada_lower for p in ["crítica", "peor", "mas critica", "reseña critica"]) or entrada_lower == "6":
+                    resultado_funcion = funciones_locales.obtener_reseña_mas_critica()
+                    print(f"\n[INTERCEPCIÓN] Ejecutando obtener_reseña_mas_critica:\n{resultado_funcion}\n")
+
+                # [ACCIÓN 7] DAME EL DIAGNÓSTICO DEL SISTEMA
+                elif any(p in entrada_lower for p in ["diagnóstico", "sistema", "diagnostico"]) or entrada_lower == "7":
+                    resultado_funcion = funciones_locales.obtener_diagnostico_sistema()
+                    print(f"\n[INTERCEPCIÓN] Ejecutando obtener_diagnostico_sistema:\n{resultado_funcion}\n")
+
+                # [ACCIÓN 8] LIMPIAR CACHE DE SCRAPING
+                elif any(p in entrada_lower for p in ["limpiar", "cache", "scraping"]) or entrada_lower == "8":
+                    resultado_funcion = funciones_locales.limpiar_cache_scraping()
+                    print(f"\n[INTERCEPCIÓN] Ejecutando limpiar_cache_scraping:\n{resultado_funcion}\n")
+
+                # ─── FLUJO REGULAR DEL RAG HÍBRIDO (SI NO ES NINGUNA FUNCIÓN) ───
                 else:
-                    # Flujo regular del RAG Híbrido
                     resultado = asistente.consultar(
                         pregunta=pregunta_final, 
                         filtro_categoria=cat_filtro, 
                         filtro_sentimiento=sent_filtro
                     )
+                    # Respaldamos la respuesta generada para la Acción 1
+                    ultimo_informe_rag = resultado 
                     print(f"\n[INFORME GENERADO POR RAG]\n{resultado}\n")
+                    
             except Exception as e:
                 print(f"[ERROR] Estado de ejecución controlado: {e}\n")
                 
             print("-" * 70)
 
-        # Si el chat se rompió por orden de reinicio, el ciclo principal continúa y pide la nueva URL
+        # Si rompimos el ciclo por orden de /reiniciar, regresa arriba a pedir la nueva URL
         if bandera_reinicio:
             continue
 
