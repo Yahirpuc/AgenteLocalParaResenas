@@ -33,7 +33,7 @@ def iniciar_flujo_completo():
     # BUCLE PRINCIPAL DE CONTROL (Mantiene el orquestador vivo para iterar múltiples URLs)
     while True:
         if ejecutar_extraccion:
-            url_objetivo = input("\nIntroduce la URL del producto para analizar (Amazon o Mercado Libre) > ").strip()
+            url_objetivo = input("\nIntroduce la URL del producto para analizar > ").strip()
             
             if not url_objetivo:
                 print("[ERROR] No introdujiste una URL válida. Cancelando proceso.")
