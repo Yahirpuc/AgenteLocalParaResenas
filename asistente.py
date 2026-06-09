@@ -10,12 +10,13 @@ from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
 from llama_index.retrievers.bm25 import BM25Retriever
 
+# Importaciones para Memoria y Chat Engine (Sin herramientas redundantes)
+from llama_index.storage.chat_store.sqlite import SQLiteChatStore
+from llama_index.core.memory import ChatMemoryBuffer
+from llama_index.core.chat_engine import CondenseQuestionChatEngine 
+
 class AsistenteAnaliticoHibrido:
     def __init__(self, ruta_db="chroma_db", nombre_coleccion="reviews_analizadas"):
-        """
-        Inicializa el motor RAG de ejecución local absoluta, conectándose a ChromaDB,
-        reconstruyendo los nodos e inicializando los modelos de Ollama.
-        """
         if not os.path.exists(ruta_db):
             raise FileNotFoundError(f"[ERROR] No se encontró el almacenamiento persistente en '{ruta_db}'. Ejecute 'main.py' con la opción de extracción primero.")
 
@@ -24,7 +25,6 @@ class AsistenteAnaliticoHibrido:
         self.llm = Ollama(model="qwen2.5:1.5b", request_timeout=120.0)
 
         print("[INFO] Estableciendo conexión con ChromaDB...")
-        # SOLUCIÓN CRÍTICA: Forzamos la configuración explícita de tenant para evitar colisiones en caliente
         self.db_cliente = chromadb.PersistentClient(
             path=ruta_db,
             settings=Settings(
@@ -35,33 +35,32 @@ class AsistenteAnaliticoHibrido:
         )
         self.chroma_collection = self.db_cliente.get_collection(name=nombre_coleccion)
         
-        # Asociación de la base de datos persistente local con LlamaIndex
         self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
         self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
         
-        # Reconstrucción del índice desde el almacenamiento vectorial
         self.index = VectorStoreIndex.from_vector_store(
             self.vector_store,
             storage_context=self.storage_context,
             embed_model=self.embed_model
         )
         
-        # Descargar los textos reales directo de ChromaDB y convertirlos en Nodos de LlamaIndex
         print("[INFO] Recuperando documentos de ChromaDB para el motor de palabras clave (BM25)...")
         from llama_index.core.schema import TextNode
         
         datos_chroma = self.chroma_collection.get()
         self.nodos_documentos = []
         
-        # Reconstruimos la lista de nodos dinámicamente con los textos e IDs reales de tu BD
         for texto, id_doc, metadato in zip(datos_chroma['documents'], datos_chroma['ids'], datos_chroma['metadatas']):
             self.nodos_documentos.append(
                 TextNode(text=texto, id_=id_doc, metadata=metadato)
             )
         print(f"[INFO] Éxito: {len(self.nodos_documentos)} nodos cargados en el motor BM25.")
 
+        # 1. ALMACENAMIENTO PERSISTENTE DE SESIÓN (RÚBRICA B)
+        self.chat_store = SQLiteChatStore.from_uri(uri="sqlite:///sesiones_chat.sqlite")
+        self.memory = None 
+
     def cerrar_conexion(self):
-        """Vacia por completo la colección de ChromaDB de forma interna para evitar bloqueos en Windows"""
         print("[INFO] Vaciando registros internos de la base de datos de forma segura...")
         try:
             todos_los_datos = self.chroma_collection.get()
@@ -73,11 +72,19 @@ class AsistenteAnaliticoHibrido:
         except Exception as e:
             print(f"[ADVERTENCIA] No se pudo vaciar la colección internamente: {e}")
 
+    def iniciar_sesion(self, conversation_id: str):
+        # Protege la memoria VRAM y previene caídas (Sliding Window - RÚBRICA C y D)
+        self.memory = ChatMemoryBuffer.from_defaults(
+            token_limit=3000, 
+            chat_store=self.chat_store, 
+            chat_store_key=conversation_id
+        )
+        print(f"[INFO] Memoria persistente cargada/creada para la sesión: {conversation_id}")
+
     def consultar(self, pregunta: str, filtro_categoria: str = None, filtro_sentimiento: str = None):
-        """
-        Ejecuta la recuperación híbrida local real combinando vectores y BM25,
-        asegurando que el prompt estructurado se aplique correctamente sobre el contexto.
-        """
+        if not self.memory:
+            raise ValueError("[ERROR] Debes llamar a 'iniciar_sesion()' antes de realizar consultas.")
+
         from llama_index.core.response_synthesizers import CompactAndRefine
         from llama_index.core import PromptTemplate
 
@@ -89,10 +96,9 @@ class AsistenteAnaliticoHibrido:
             
         filtros = MetadataFilters(filters=lista_filtros) if lista_filtros else None
 
-        # 1. Recuperador Vectorial (Aplica filtros nativos en Chroma)
+        # Recuperadores
         retriever_vectorial = self.index.as_retriever(similarity_top_k=5, filters=filtros)
         
-        # 2. Recuperador BM25 Filtrado dinámicamente en memoria para evitar mezclas
         nodos_filtrados = self.nodos_documentos
         if filtro_categoria or filtro_sentimiento:
             nodos_filtrados = []
@@ -105,16 +111,13 @@ class AsistenteAnaliticoHibrido:
                 if cumple:
                     nodos_filtrados.append(nodo)
         
-        # Configuración dinámica de top_k para evitar Warnings si quedan pocos documentos
         top_k_dinamico = min(5, len(nodos_filtrados)) if nodos_filtrados else 5
 
-        # Si el filtro dejó vacío al BM25, usamos un fallback seguro para que no truene
         if not nodos_filtrados:
             retriever_bm25 = retriever_vectorial
         else:
             retriever_bm25 = BM25Retriever.from_defaults(nodes=nodos_filtrados, similarity_top_k=top_k_dinamico)
         
-        # 3. Fusión Híbrida Real mediante Reciprocal Rerank Fusion (RRF)
         try:
             fusion_retriever = QueryFusionRetriever(
                 [retriever_vectorial, retriever_bm25],
@@ -125,17 +128,17 @@ class AsistenteAnaliticoHibrido:
             )
         except ValueError:
             fusion_retriever = QueryFusionRetriever(
-                [retriever_vectorstore_fallb := [retriever_vectorial, retriever_bm25]],
+                [retriever_vectorial, retriever_bm25],
                 similarity_top_k=5,
                 num_queries=1,
                 llm=self.llm
             )
 
-        # 4. Plantilla de Prompt con Formato Estricto ChatML para Qwen Local
+        # Plantilla de Prompt estricta
         plantilla_QA = (
             "<|im_start|>system\n"
             "Actúa como un Consultor de Producto y Analista Técnico experto. Tu única tarea es responder la consulta del usuario utilizando ÚNICAMENTE el contexto de reseñas provisto. "
-            "Sé directo, frío, objective y estructurado en tu análisis. No asumas, no extrapoles ni inventes características o quejas que no estén escritas textualmente.\n"
+            "Sé directo, frío, objetivo y estructurado en tu análisis. No asumas, no extrapoles ni inventes características o quejas que no estén escritas textualmente.\n"
             "REGLA DE ORO HÍBRIDA: Préstale especial atención tanto al contexto general de las opiniones como a los términos o palabras clave exactas que el usuario está buscando.\n"
             "REGLA CRÍTICA DE FRONTERA: Si el contexto está vacío, no contiene datos suficientes o no responde directamente a la pregunta, debes contestar EXACTAMENTE con esta frase, sin añadir nada más:\n"
             "'No se cuenta con registros suficientes en las opiniones indexadas para responder a esta consulta específica.'\n"
@@ -147,20 +150,49 @@ class AsistenteAnaliticoHibrido:
         
         text_qa_template = PromptTemplate(plantilla_QA)
 
-        # Configuración del motor usando el sintetizador con el prompt correcto
         sintetizador = CompactAndRefine(llm=self.llm, text_qa_template=text_qa_template)
         
+        # Configuración del motor usando el sintetizador con el prompt correcto
         query_engine = RetrieverQueryEngine(
             retriever=fusion_retriever,
             response_synthesizer=sintetizador
         )
 
-        # Ejecución de la consulta inyectando la pregunta limpia al pipeline hibrido
-        respuesta = query_engine.query(pregunta)
-        return respuesta
+        # 5. GESTIÓN MANUAL DE MEMORIA (100% SÍNCRONA, A PRUEBA DE WINDOWS)
+        from llama_index.core.llms import ChatMessage, MessageRole
+
+        # a) Recuperamos el historial de SQLite (La ventana de tokens actúa automáticamente aquí)
+        historial_mensajes = self.memory.get()
+        historial_str = ""
+        for msg in historial_mensajes:
+            historial_str += f"{msg.role.value.capitalize()}: {msg.content}\n"
+
+        # b) Condensamos la pregunta si hay historial previo
+        pregunta_condensada = pregunta
+        if historial_str.strip():
+            print("[INFO] Evaluando contexto del historial...")
+            prompt_condensacion = (
+                "Tu tarea es reescribir la pregunta del usuario para que se entienda por sí sola, "
+                "utilizando el contexto del historial SOLO si la pregunta hace referencia indirecta a él (ej. 'este', 'el producto', 'resúmelo'). "
+                "REGLA CRÍTICA: Si la pregunta del usuario introduce un tema, objeto o producto completamente diferente (ej. zapatos, tenis, carros, etc.) "
+                "que NO tiene relación con el historial, DEBES dejar la pregunta exactamente igual, sin modificarla.\n\n"
+                f"Historial de conversación:\n{historial_str}\n"
+                f"Pregunta original: {pregunta}\n"
+                "Pregunta final a buscar:"
+            )
+            pregunta_condensada = self.llm.complete(prompt_condensacion).text.strip()
+            print(f"[RAG] Pregunta ajustada al contexto: {pregunta_condensada}")
+
+        # c) Ejecutamos la búsqueda RAG Híbrida normal (¡Sin asincronía!)
+        respuesta = query_engine.query(pregunta_condensada)
+
+        # d) Guardamos el nuevo turno en la memoria (Se guarda en SQLite automáticamente)
+        self.memory.put(ChatMessage(role=MessageRole.USER, content=pregunta))
+        self.memory.put(ChatMessage(role=MessageRole.ASSISTANT, content=respuesta.response))
+
+        return respuesta.response
 
 if __name__ == "__main__":
-    # Test de inicialización rápida del módulo local
     try:
         asistente = AsistenteAnaliticoHibrido()
         print("[OK] Módulo de asistencia híbrida listo para producción.")

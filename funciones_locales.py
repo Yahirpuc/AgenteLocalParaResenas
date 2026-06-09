@@ -7,26 +7,50 @@ from datetime import datetime
 # 🛠️ FASE 2: CATÁLOGO DE FUNCIONES LOCALES (CON TYPE HINTS Y DOCSTRINGS)
 # =====================================================================
 
-def guardar_reporte_txt(contenido: str, nombre_archivo: str) -> str:
+def guardar_reporte_txt(contenido: str = "AUTO", nombre_archivo: str = "reporte_analitico.txt") -> str:
     """
-    Crea un archivo de texto físico (.txt) en el almacenamiento local con el informe generado.
-    
-    Args:
-        contenido (str): Texto detallado o conclusiones del informe técnico.
-        nombre_archivo (str): Nombre del archivo final (ej. 'conclusiones_auditoria.txt').
-    Returns:
-        str: Mensaje de confirmación con la ruta del archivo generado exitosamente.
+    Crea un archivo de texto físico (.txt) en el almacenamiento local.
+    Si el LLM no envía contenido, lee automáticamente el JSON y genera un reporte de todas las reseñas.
     """
     try:
+        # 1. Si el modelo no manda nada o manda el texto por defecto, construimos el reporte nosotros mismos
+        if contenido == "AUTO" or contenido == "Reporte autogenerado sin contenido explícito.":
+            ruta_json = "reseñas_enriquecidas.json"
+            
+            if os.path.exists(ruta_json):
+                with open(ruta_json, "r", encoding="utf-8") as f:
+                    datos = json.load(f)
+                
+                if datos:
+                    # Estructuramos un reporte profesional en texto plano
+                    reporte = [f"=== REPORTE GLOBAL DE RESEÑAS ({len(datos)} opiniones) ===", "-"*60]
+                    
+                    # Agregamos las reseñas una por una
+                    for item in datos:
+                        reporte.append(f"Usuario:   {item.get('autor', 'Anónimo')}")
+                        reporte.append(f"Estrellas: {item.get('estrellas', 'N/A')}★")
+                        reporte.append(f"Opinión:   {item.get('texto', 'Sin texto')}")
+                        reporte.append("-" * 30)
+                        
+                    contenido = "\n".join(reporte) # Unimos todo el arreglo con saltos de línea
+                else:
+                    contenido = "[Aviso] El archivo de reseñas existe, pero está vacío."
+            else:
+                contenido = "[Error] No se encontró el archivo 'reseñas_enriquecidas.json' para generar el reporte."
+
+        # 2. Limpieza del nombre de archivo y proceso de guardado
         nombre_limpio = "".join([c for c in nombre_archivo if c.isalpha() or c.isdigit() or c in '._- ']).strip()
         if not nombre_limpio.endswith(".txt"):
             nombre_limpio += ".txt"
+        
         with open(nombre_limpio, "w", encoding="utf-8") as f:
             f.write(contenido)
-        return f"[OK] Reporte de texto guardado exitosamente como: '{nombre_limpio}'."
+            
+        return f"[OK] Reporte completo generado y guardado exitosamente como: '{nombre_limpio}'."
+    
     except Exception as e:
         return f"[ERROR] No se pudo escribir el archivo de texto: {str(e)}"
-
+    
 def exportar_analisis_csv(nombre_archivo: str = "exportacion_reseñas.csv") -> str:
     """
     Toma las reseñas enriquecidas del JSON local y las exporta a un archivo CSV estructurado.
@@ -82,21 +106,29 @@ def exportar_analisis_csv(nombre_archivo: str = "exportacion_reseñas.csv") -> s
     except Exception as e:
         return f"[ERROR] Fallo crítico durante la estructuración del archivo CSV: {str(e)}"
 
-def listar_archivos_reportes() -> str:
+def listar_archivos_reportes(**kwargs) -> str:
     """
     Escanea el directorio raíz actual del proyecto para listar los informes generados (.txt o .csv).
-    
-    Returns:
-        str: Listado formateado de los archivos encontrados en el servidor local.
+    Filtra automáticamente los archivos del sistema.
     """
     try:
-        archivos = [f for f in os.listdir('.') if f.endswith('.txt') or f.endswith('.csv')]
+        # 1. Definimos qué archivos no queremos que se muestren nunca
+        archivos_ignorados = ["requirements.txt"]
+        
+        # 2. Agregamos la condición 'and f not in archivos_ignorados'
+        archivos = [
+            f for f in os.listdir('.') 
+            if (f.endswith('.txt') or f.endswith('.csv')) and f not in archivos_ignorados
+        ]
+        
         if not archivos:
             return "[INFO] No se encontraron archivos de reportes previos (.txt o .csv) creados en el directorio."
+        
         return "[ARCHIVOS DETECTADOS]:\n" + "\n".join([f"- {a}" for a in archivos])
+    
     except Exception as e:
         return f"[ERROR] No se pudo escanear el directorio del servidor: {str(e)}"
-
+    
 def calcular_promedio_estrellas() -> str:
     """
     Lee de forma directa el JSON crudo de reseñas para calcular el promedio matemático exacto de estrellas.
@@ -139,7 +171,7 @@ def contar_sentimientos_totales() -> str:
     except Exception as e:
         return f"[ERROR] Excepción estadística: {str(e)}"
 
-def obtener_reseña_mas_critica() -> str:
+def obtener_resena_mas_critica(**kwargs) -> str:
     """
     Filtra y extrae de forma directa la opinión con la menor puntuación y mayor longitud del texto.
     
@@ -161,7 +193,7 @@ def obtener_reseña_mas_critica() -> str:
         return f"=== OPINIÓN MÁS CRÍTICA DETECTADA ===\nAUTOR: {critica.get('autor')}\nESTRELLAS: {critica.get('estrellas')}★\nTEXTO: {critica.get('texto')}"
     except Exception as e:
         return f"[ERROR] Error al aislar la reseña crítica: {str(e)}"
-
+    
 def obtener_diagnostico_sistema() -> str:
     """
     Consulta los recursos de hardware lógico locales disponibles para garantizar la estabilidad de Ollama.
