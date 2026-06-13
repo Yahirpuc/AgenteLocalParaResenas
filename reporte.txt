@@ -1,0 +1,55 @@
+=== REPORTE GLOBAL DE RESEÑAS (10 opiniones) ===
+------------------------------------------------------------
+Usuario:   Alberto Rodriguez
+Estrellas: 5★
+Opinión:   Funciona muy bien. Mi laptop ya no le cargo con tanto cable conectado directamente. Ademas de que se ve muy bien.
+------------------------------
+Usuario:   Cliente
+Estrellas: 5★
+Opinión:   Buen funcionamiento y calidad
+------------------------------
+Usuario:   alfonso
+Estrellas: 1★
+Opinión:   Producto no sirve, a los 30 dias de uso dejo de funcionar. No recomiendo este producto, la verdad ya perdi la garantia y el producto no cuenta con soporte para solucionar este problema, y si a eso le sumas el valor del mismo, no es nada barato, mal producto no lo compren no vayan a salir estafados como yo, pues se vencio la devolucion, dejo de funcionar a los 40 dias de uso.
+------------------------------
+Usuario:   Fer
+Estrellas: 5★
+Opinión:   Excelente producto, tanto que lo quice cambiar por uno más potente, pero no se puede hacer cambio, y la devolución se tardó años y el descuento se perdió.
+------------------------------
+Usuario:   Gabriel G.
+Estrellas: 5★
+Opinión:   Funciona muy bien, también funciona en linux (sólo lo he probado en Ubuntu y Arch)
+------------------------------
+Usuario:   Sinai1
+Estrellas: 5★
+Opinión:   probe varios y no funcionaron este funciono de perlas.
+------------------------------
+Usuario:   José ALBERTO Lara diaz
+Estrellas: 5★
+Opinión:   Buen producto carga mi equipo dell
+------------------------------
+Usuario:   Mark Pi
+Estrellas: 5★
+Opinión:   Buen producto
+------------------------------
+Usuario:   Santiago
+Estrellas: 5★
+Opinión:   No he probado aún la funcionalidad del HDMI pero voy a dar mis primeras impresiones.
+
+* Paquete fantasticamente presentado.
+* La docking station es más pequeña de lo esperado, pero para mi es perfecto.
+* Es robusta y aunque es de plastico se ve de calidad premium. Lleva ventilacion adecuada y pesa bastante para su tamaño.
+* El transformador es de excelente calidad, pesa mas que el de mi portatil.
+* Los cables se notan también de calidad "pistacho de bar". Protegidos por malla y rígidos.
+* Como añadido además del transformador, vienen 3 cables con 3 enchufes: europeo, Uk y otro más que no recuerdo.
+
+Lo que he visto hasta ahora me ha encantado por poco más de 100€.
+
+Actualizo después de unos meses: fantástico. Tengo conectados 2 monitores, ratón, teclado, cable de carga y RJ45. Lo aguanta todo bien. Si tengo que sacarle un pero es que es muy pequeña y al salir todos los cables por detrás, se suele inclinar sola hacia atrás por el peso así que le tengo colocado un pequeño soporte de 1cm de alto para que se mantenga recta.
+------------------------------
+Usuario:   Lancelot
+Estrellas: 5★
+Opinión:   A very good docking station - even for Mac, as long as you understand its limitations. I'm currently using this with a MacBook Pro and a single monitor. I have other peripherals plugged in - keyboard, mouse, audio interface, music keyboard. It provides a very elegant solution, one usb-c connection and the screen springs into life and all my peripherals with just one connection. It also charges my laptop and does a time machine back-up. A very simple solution to providing a pretty instant with between laptop and desktop. I've had one incident where it decided to switch on and off a couple of times, not sure why. But its functioned very well for pretty much the whole time I've had it and I'm very happy with the very easy solution it provides.
+
+UPDATE - the incident above, switching on and off has happened again and I tracked it down to an issue with leaving hard drives connected to the docking station when the computer is unplugged- and later reconnected. You need to physically disconnect any hard drives from the dock when the computer isn't connected as they seem to confuse the computer (MacBook Pro) and cause the intermittent connection issue. This may be helpful to others who've had similar issues. The drives can quite happily be reconnected once the computer has been connected to the dock
+------------------------------
