@@ -1,7 +1,9 @@
 import os
+import asyncio
+import sys
 import chromadb
 from chromadb.config import Settings
-from llama_index.core import StorageContext, VectorStoreIndex
+from llama_index.core import StorageContext, VectorStoreIndex 
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
@@ -10,10 +12,10 @@ from llama_index.core.query_engine import RetrieverQueryEngine
 from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
 from llama_index.retrievers.bm25 import BM25Retriever
 
-# Importaciones para Memoria y Chat Engine (Sin herramientas redundantes)
 from llama_index.storage.chat_store.sqlite import SQLiteChatStore
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.chat_engine import CondenseQuestionChatEngine 
+
 
 class AsistenteAnaliticoHibrido:
     def __init__(self, ruta_db="chroma_db", nombre_coleccion="reviews_analizadas"):
@@ -56,7 +58,6 @@ class AsistenteAnaliticoHibrido:
             )
         print(f"[INFO] Éxito: {len(self.nodos_documentos)} nodos cargados en el motor BM25.")
 
-        # 1. ALMACENAMIENTO PERSISTENTE DE SESIÓN (RÚBRICA B)
         self.chat_store = SQLiteChatStore.from_uri(uri="sqlite:///sesiones_chat.sqlite")
         self.memory = None 
 
@@ -73,7 +74,6 @@ class AsistenteAnaliticoHibrido:
             print(f"[ADVERTENCIA] No se pudo vaciar la colección internamente: {e}")
 
     def iniciar_sesion(self, conversation_id: str):
-        # Protege la memoria VRAM y previene caídas (Sliding Window - RÚBRICA C y D)
         self.memory = ChatMemoryBuffer.from_defaults(
             token_limit=3000, 
             chat_store=self.chat_store, 
@@ -81,22 +81,23 @@ class AsistenteAnaliticoHibrido:
         )
         print(f"[INFO] Memoria persistente cargada/creada para la sesión: {conversation_id}")
 
-    def consultar(self, pregunta: str, filtro_categoria: str = None, filtro_sentimiento: str = None):
+    async def consultar(self, pregunta: str, filtro_categoria: str = None, filtro_sentimiento: str = None):
         if not self.memory:
             raise ValueError("[ERROR] Debes llamar a 'iniciar_sesion()' antes de realizar consultas.")
 
         from llama_index.core.response_synthesizers import CompactAndRefine
         from llama_index.core import PromptTemplate
+        from llama_index.core.llms import ChatMessage, MessageRole
 
+        # ── Filtros de metadatos ──
         lista_filtros = []
         if filtro_categoria:
             lista_filtros.append(ExactMatchFilter(key="categoria", value=filtro_categoria))
         if filtro_sentimiento:
             lista_filtros.append(ExactMatchFilter(key="sentimiento", value=filtro_sentimiento))
-            
         filtros = MetadataFilters(filters=lista_filtros) if lista_filtros else None
 
-        # Recuperadores
+        # ── Recuperadores ──
         retriever_vectorial = self.index.as_retriever(similarity_top_k=5, filters=filtros)
         
         nodos_filtrados = self.nodos_documentos
@@ -134,7 +135,7 @@ class AsistenteAnaliticoHibrido:
                 llm=self.llm
             )
 
-        # Plantilla de Prompt estricta
+        # ── Prompt ──
         plantilla_QA = (
             "<|im_start|>system\n"
             "Actúa como un Consultor de Producto y Analista Técnico experto. Tu única tarea es responder la consulta del usuario utilizando ÚNICAMENTE el contexto de reseñas provisto. "
@@ -147,27 +148,20 @@ class AsistenteAnaliticoHibrido:
             "Pregunta de análisis: {query_str}<|im_end|>\n"
             "<|im_start|>assistant\n"
         )
-        
         text_qa_template = PromptTemplate(plantilla_QA)
-
         sintetizador = CompactAndRefine(llm=self.llm, text_qa_template=text_qa_template)
-        
-        # Configuración del motor usando el sintetizador con el prompt correcto
         query_engine = RetrieverQueryEngine(
             retriever=fusion_retriever,
             response_synthesizer=sintetizador
         )
 
-        # 5. GESTIÓN MANUAL DE MEMORIA (100% SÍNCRONA, A PRUEBA DE WINDOWS)
-        from llama_index.core.llms import ChatMessage, MessageRole
-
-        # a) Recuperamos el historial de SQLite (La ventana de tokens actúa automáticamente aquí)
+        # ── a) Historial ──
         historial_mensajes = self.memory.get()
         historial_str = ""
         for msg in historial_mensajes:
             historial_str += f"{msg.role.value.capitalize()}: {msg.content}\n"
 
-        # b) Condensamos la pregunta si hay historial previo
+        # ── b) Condensación (síncrona via hilo dedicado) ──
         pregunta_condensada = pregunta
         if historial_str.strip():
             print("[INFO] Evaluando contexto del historial...")
@@ -180,17 +174,19 @@ class AsistenteAnaliticoHibrido:
                 f"Pregunta original: {pregunta}\n"
                 "Pregunta final a buscar:"
             )
-            pregunta_condensada = self.llm.complete(prompt_condensacion).text.strip()
+            respuesta_llm = await self.llm.acomplete(prompt_condensacion)
+            pregunta_condensada = respuesta_llm.text.strip()
             print(f"[RAG] Pregunta ajustada al contexto: {pregunta_condensada}")
 
-        # c) Ejecutamos la búsqueda RAG Híbrida normal (¡Sin asincronía!)
-        respuesta = query_engine.query(pregunta_condensada)
+        # ── c) Búsqueda RAG Híbrida ──
+        respuesta = await query_engine.aquery(pregunta_condensada)
 
-        # d) Guardamos el nuevo turno en la memoria (Se guarda en SQLite automáticamente)
+        # ── d) Guardar en memoria ──
         self.memory.put(ChatMessage(role=MessageRole.USER, content=pregunta))
         self.memory.put(ChatMessage(role=MessageRole.ASSISTANT, content=respuesta.response))
 
         return respuesta.response
+
 
 if __name__ == "__main__":
     try:

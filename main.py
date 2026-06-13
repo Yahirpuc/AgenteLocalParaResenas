@@ -1,54 +1,143 @@
+
+import asyncio
+import sys
 import os
 import time
 import sys
 import gc
 import uuid
-import sqlite3  # Añadido para el gestor de usuarios y menús
+import sqlite3
+import getpass
+import hashlib
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from llama_index.core.tools import FunctionTool
 from extractor_especifico import ExtractorEspecifico
 from clasificador import ClasificadorReseñas
 from asistente import AsistenteAnaliticoHibrido
 from indexador import IndexadorRAG
-
 import funciones_locales
-# --- SOLUCIÓN AL ERROR ASYNC ---
-import nest_asyncio
-nest_asyncio.apply()
 
 # ====================================================================
-# 🛠️ GESTOR DE USUARIOS Y SESIONES (NUEVO)
+# 🛠️ GESTOR DE USUARIOS AVANZADO (ENCRIPTADO)
 # ====================================================================
 def inicializar_bd_sesiones():
-    """Crea una base de datos paralela solo para organizar a los usuarios y sus chats."""
+    """Crea las tablas relacionales para cuentas de usuario y sus chats."""
     conn = sqlite3.connect("registro_usuarios.sqlite")
     c = conn.cursor()
+    # Tabla para las cuentas (El correo es la llave principal)
+    c.execute('''CREATE TABLE IF NOT EXISTS usuarios 
+                 (correo TEXT PRIMARY KEY, nombre TEXT, apellido TEXT, password BLOB)''')
+    # Tabla para las sesiones (Relacionada al correo)
     c.execute('''CREATE TABLE IF NOT EXISTS sesiones 
-                 (usuario TEXT, session_id TEXT, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+                 (correo TEXT, session_id TEXT, fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
 
-def registrar_nueva_sesion(usuario, session_id):
-    """Guarda un nuevo chat en el registro del usuario."""
+def encriptar_password(password):
+    """Genera un hash seguro usando pbkdf2_hmac y un salt aleatorio."""
+    salt = os.urandom(32) # Capa de seguridad extra
+    key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+    return salt + key
+
+def verificar_password(password, hash_almacenado):
+    """Compara la contraseña ingresada con el hash guardado en la base de datos."""
+    salt = hash_almacenado[:32]
+    key_almacenada = hash_almacenado[32:]
+    key_nueva = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+    return key_nueva == key_almacenada
+
+def registrar_usuario():
+    print("\n" + "-" * 40)
+    print(" 📝 REGISTRO DE NUEVO USUARIO")
+    print("-" * 40)
+    nombre = input("Nombre: ").strip()
+    apellido = input("Apellido: ").strip()
+    correo = input("Correo electrónico: ").strip().lower()
+    
+    conn = sqlite3.connect("registro_usuarios.sqlite")
+    c = conn.cursor()
+    c.execute("SELECT correo FROM usuarios WHERE correo=?", (correo,))
+    if c.fetchone():
+        print("[ERROR] Este correo ya está registrado en el sistema.")
+        conn.close()
+        return None
+        
+    password = getpass.getpass("Crea una contraseña (invisible): ")
+    password_hash = encriptar_password(password)
+    
+    c.execute("INSERT INTO usuarios (correo, nombre, apellido, password) VALUES (?, ?, ?, ?)", 
+              (correo, nombre, apellido, password_hash))
+    conn.commit()
+    conn.close()
+    print(f"\n✅ ¡Cuenta creada con éxito para {nombre} {apellido}!")
+    return correo
+
+def iniciar_sesion_auth():
+    print("\n" + "-" * 40)
+    print(" 🔑 INICIAR SESIÓN")
+    print("-" * 40)
+    correo = input("Correo electrónico: ").strip().lower()
+    password = getpass.getpass("Contraseña (invisible): ")
+    
+    conn = sqlite3.connect("registro_usuarios.sqlite")
+    c = conn.cursor()
+    c.execute("SELECT nombre, password FROM usuarios WHERE correo=?", (correo,))
+    resultado = c.fetchone()
+    conn.close()
+    
+    if resultado and verificar_password(password, resultado[1]):
+        print(f"\n✅ ¡Autenticación exitosa! Bienvenido de nuevo, {resultado[0]}.")
+        return correo
+    else:
+        print("\n[ERROR] Correo o contraseña incorrectos. Acceso denegado.")
+        return None
+
+def manejar_autenticacion():
+    """Controlador del menú principal de acceso."""
+    while True:
+        print("\n" + "=" * 70)
+        print(" 🛡️ SISTEMA DE AUTENTICACIÓN LOCAL")
+        print("=" * 70)
+        print("  [ 1 ] Iniciar Sesión")
+        print("  [ 2 ] Crear Nueva Cuenta")
+        print("  [ 3 ] Salir del sistema")
+        print("-" * 70)
+        opcion = input("Elige una opción > ").strip()
+        
+        if opcion == '1':
+            correo = iniciar_sesion_auth()
+            if correo: return correo
+        elif opcion == '2':
+            correo = registrar_usuario()
+            if correo: return correo
+        elif opcion == '3':
+            print("Cerrando sistema...")
+            sys.exit()
+        else:
+            print("[ADVERTENCIA] Opción inválida. Intenta de nuevo.")
+
+def registrar_nueva_sesion(correo, session_id):
     conn = sqlite3.connect("registro_usuarios.sqlite")
     c = conn.cursor()
     c.execute("SELECT session_id FROM sesiones WHERE session_id=?", (session_id,))
     if not c.fetchone():
-        c.execute("INSERT INTO sesiones (usuario, session_id) VALUES (?, ?)", (usuario, session_id))
+        c.execute("INSERT INTO sesiones (correo, session_id) VALUES (?, ?)", (correo, session_id))
     conn.commit()
     conn.close()
 
-def listar_sesiones_usuario(usuario):
-    """Obtiene todos los chats anteriores de un usuario específico."""
+def listar_sesiones_usuario(correo):
     conn = sqlite3.connect("registro_usuarios.sqlite")
     c = conn.cursor()
-    c.execute("SELECT session_id, fecha FROM sesiones WHERE usuario=? ORDER BY fecha DESC", (usuario,))
+    c.execute("SELECT session_id, fecha FROM sesiones WHERE correo=? ORDER BY fecha DESC", (correo,))
     filas = c.fetchall()
     conn.close()
     return filas
 # ====================================================================
 
-
-def iniciar_flujo_completo():
+async def iniciar_flujo_completo():
     print("=" * 70)
     print("     SISTEMA ENRIQUECIDO DE ANALÍTICA LOCAL (ORQUESTADOR SMART)     ")
     print("=" * 70)
@@ -133,18 +222,23 @@ def iniciar_flujo_completo():
         # ====================================================================
         # 🔐 PANTALLA DE INICIO DE SESIÓN Y MENÚ DE CHATS
         # ====================================================================
-        print("\n" + "=" * 70)
-        print(" 🔐 PANTALLA DE INICIO DE SESIÓN")
-        print("=" * 70)
-        usuario_actual = input("👤 Ingresa tu nombre de usuario > ").strip().lower()
-        if not usuario_actual:
-            usuario_actual = "anonimo"
+        # 1. Llamamos al sistema de autenticación (el flujo se detiene hasta que inicies sesión)
+        correo_actual = manejar_autenticacion()
 
-        sesiones_previas = listar_sesiones_usuario(usuario_actual)
+        # 2. Obtenemos el nombre del usuario para mostrarlo bonito en la terminal
+        conn = sqlite3.connect("registro_usuarios.sqlite")
+        c = conn.cursor()
+        c.execute("SELECT nombre FROM usuarios WHERE correo=?", (correo_actual,))
+        resultado_nombre = c.fetchone()
+        nombre_display = resultado_nombre[0] if resultado_nombre else "Usuario"
+        conn.close()
+
+        # 3. Cargamos los historiales vinculados a ese correo
+        sesiones_previas = listar_sesiones_usuario(correo_actual)
         conversation_id = None
 
         if sesiones_previas:
-            print(f"\n[INFO] ¡Hola de nuevo, {usuario_actual}! Tienes {len(sesiones_previas)} chats guardados.")
+            print(f"\n[INFO] ¡Hola de nuevo, {nombre_display}! Tienes {len(sesiones_previas)} chats guardados.")
             print("-" * 60)
             for i, (sid, fecha) in enumerate(sesiones_previas):
                 print(f"  [{i+1}] Chat: {sid} (Última vez: {fecha[:16]})")
@@ -156,12 +250,12 @@ def iniciar_flujo_completo():
             if opcion == 'n':
                 id_corto = str(uuid.uuid4())[:6]
                 conversation_id = f"chat_{id_corto}"
-                registrar_nueva_sesion(usuario_actual, conversation_id)
+                registrar_nueva_sesion(correo_actual, conversation_id)
                 print(f"\n[NUEVA SESIÓN] Se ha creado el chat: {conversation_id}")
             else:
                 try:
                     indice = int(opcion) - 1
-                    if indice >= 0 and indice < len(sesiones_previas):
+                    if 0 <= indice < len(sesiones_previas):
                         conversation_id = sesiones_previas[indice][0]
                         print(f"\n[RECUPERANDO SESIÓN] Cargando base de datos del chat...")
                     else:
@@ -170,12 +264,12 @@ def iniciar_flujo_completo():
                     print("[ERROR] Opción inválida. Creando un chat nuevo por seguridad...")
                     id_corto = str(uuid.uuid4())[:6]
                     conversation_id = f"chat_{id_corto}"
-                    registrar_nueva_sesion(usuario_actual, conversation_id)
+                    registrar_nueva_sesion(correo_actual, conversation_id)
         else:
-            print(f"\n[INFO] Bienvenido, {usuario_actual}. No tienes chats previos.")
+            print(f"\n[INFO] Bienvenido, {nombre_display}. No tienes chats previos.")
             id_corto = str(uuid.uuid4())[:6]
             conversation_id = f"chat_{id_corto}"
-            registrar_nueva_sesion(usuario_actual, conversation_id)
+            registrar_nueva_sesion(correo_actual, conversation_id)
             print(f"[NUEVA SESIÓN] Se ha creado tu primer chat: {conversation_id}")
 
         # Inyectamos el ID al asistente para que cargue la memoria de SQLite
@@ -210,7 +304,8 @@ def iniciar_flujo_completo():
 
         # BUCLE INTERACTIVO DEL CHAT
         while True:
-            entrada = input(f"[{usuario_actual} | {conversation_id}] > ").strip()
+            # Usamos el nombre en el prompt para que se vea personalizado
+            entrada = input(f"[{nombre_display} | {conversation_id}] > ").strip()
             
             if entrada.lower() in ["salir", "exit", "quit"]:
                 print("[INFO] Finalizando sesión del asistente analítico local.")
@@ -253,10 +348,11 @@ def iniciar_flujo_completo():
             
             try:
                 if intentar_fc:
-                    respuesta_funcion = asistente.llm.predict_and_call(herramientas_fc, user_msg=entrada, allow_parallel_tool_calls=False)
+                    respuesta_funcion = await asistente.llm.apredict_and_call(herramientas_fc, user_msg=entrada, allow_parallel_tool_calls=False)
                     print(f"\n[INTERCEPCIÓN DE FUNCIÓN]\n{respuesta_funcion}\n")
                 else:
-                    resultado = asistente.consultar(pregunta=pregunta_final, filtro_categoria=cat_filtro, filtro_sentimiento=sent_filtro)
+                    # CAMBIO AQUÍ: await
+                    resultado = await asistente.consultar(pregunta=pregunta_final, filtro_categoria=cat_filtro, filtro_sentimiento=sent_filtro)
                     print(f"\n🤖 AGENTE: \n{resultado}\n")
             except Exception as e:
                 print(f"[ERROR]: {e}\n")
@@ -267,4 +363,4 @@ def iniciar_flujo_completo():
             continue
 
 if __name__ == "__main__":
-    iniciar_flujo_completo()
+    asyncio.run(iniciar_flujo_completo())
