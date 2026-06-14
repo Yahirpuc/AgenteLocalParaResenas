@@ -1,0 +1,5 @@
+touch datos/base_relacional/.gitkeep
+touch datos/base_vectorial/.gitkeep
+touch datos/crudos/.gitkeep
+touch datos/procesados/.gitkeep
+touch sesion_playwright/.gitkeep

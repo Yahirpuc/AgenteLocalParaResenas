@@ -3,6 +3,9 @@ import json
 import csv
 from datetime import datetime
 
+# Ruta global para las salidas y lecturas del agente
+DIRECTORIO_SALIDA = os.path.join("datos", "procesados")
+
 # =====================================================================
 # 🛠️ FASE 2: CATÁLOGO DE FUNCIONES LOCALES (CON TYPE HINTS Y DOCSTRINGS)
 # =====================================================================
@@ -18,12 +21,19 @@ def guardar_reporte_txt(contenido: str, nombre_archivo: str) -> str:
         str: Mensaje de confirmación con la ruta del archivo generado exitosamente.
     """
     try:
+        # Aseguramos que la carpeta exista
+        os.makedirs(DIRECTORIO_SALIDA, exist_ok=True)
+        
         nombre_limpio = "".join([c for c in nombre_archivo if c.isalpha() or c.isdigit() or c in '._- ']).strip()
         if not nombre_limpio.endswith(".txt"):
             nombre_limpio += ".txt"
-        with open(nombre_limpio, "w", encoding="utf-8") as f:
+            
+        # Unimos la ruta de la carpeta con el nombre del archivo
+        ruta_completa = os.path.join(DIRECTORIO_SALIDA, nombre_limpio)
+        
+        with open(ruta_completa, "w", encoding="utf-8") as f:
             f.write(contenido)
-        return f"[OK] Reporte de texto guardado exitosamente como: '{nombre_limpio}'."
+        return f"[OK] Reporte de texto guardado exitosamente en: '{ruta_completa}'."
     except Exception as e:
         return f"[ERROR] No se pudo escribir el archivo de texto: {str(e)}"
 
@@ -37,17 +47,21 @@ def exportar_analisis_csv(nombre_archivo: str = "exportacion_reseñas.csv") -> s
     Returns:
         str: Estado de la operación indicando el éxito o fallo técnico de la conversión.
     """
-    origen_json = "reseñas_enriquecidas.json"
+    os.makedirs(DIRECTORIO_SALIDA, exist_ok=True)
+    origen_json = os.path.join(DIRECTORIO_SALIDA, "reseñas_enriquecidas.json")
+    
     if not os.path.exists(origen_json):
-        return "[FALLO] No existen datos extraídos en JSON para realizar la exportación a CSV."
+        return f"[FALLO] No existen datos extraídos en JSON ({origen_json}) para realizar la exportación a CSV."
     try:
         with open(origen_json, "r", encoding="utf-8") as f:
             datos = json.load(f)
         if not datos:
             return "[FALLO] El archivo de reseñas está vacío."
         
+        ruta_completa = os.path.join(DIRECTORIO_SALIDA, nombre_archivo)
+        
         # SOLUCIÓN DE CODIFICACIÓN: 'utf-8-sig' fuerza a Excel a reconocer eñes y acentos automáticamente
-        with open(nombre_archivo, "w", newline="", encoding="utf-8-sig") as f:
+        with open(ruta_completa, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
             writer.writerow(["ID", "Autor", "Titulo", "Texto", "Estrellas", "Sentimiento", "Categoria"])
             for item in datos:
@@ -78,24 +92,25 @@ def exportar_analisis_csv(nombre_archivo: str = "exportacion_reseñas.csv") -> s
                     item.get("metadatos", {}).get("sentimiento", ""),
                     item.get("metadatos", {}).get("categoria", "")
                 ])
-        return f"[OK] Base de datos de opiniones exportada con éxito a: '{nombre_archivo}' con formato corregido y limpio."
+        return f"[OK] Base de datos de opiniones exportada con éxito en: '{ruta_completa}' con formato corregido y limpio."
     except Exception as e:
         return f"[ERROR] Fallo crítico durante la estructuración del archivo CSV: {str(e)}"
 
 def listar_archivos_reportes() -> str:
     """
-    Escanea el directorio raíz actual del proyecto para listar los informes generados (.txt o .csv).
+    Escanea el directorio procesado para listar los informes generados (.txt o .csv).
     
     Returns:
         str: Listado formateado de los archivos encontrados en el servidor local.
     """
     try:
-        archivos = [f for f in os.listdir('.') if f.endswith('.txt') or f.endswith('.csv')]
+        os.makedirs(DIRECTORIO_SALIDA, exist_ok=True)
+        archivos = [f for f in os.listdir(DIRECTORIO_SALIDA) if f.endswith('.txt') or f.endswith('.csv')]
         if not archivos:
-            return "[INFO] No se encontraron archivos de reportes previos (.txt o .csv) creados en el directorio."
-        return "[ARCHIVOS DETECTADOS]:\n" + "\n".join([f"- {a}" for a in archivos])
+            return f"[INFO] No se encontraron archivos de reportes previos (.txt o .csv) en el directorio '{DIRECTORIO_SALIDA}'."
+        return f"[ARCHIVOS DETECTADOS EN {DIRECTORIO_SALIDA}]:\n" + "\n".join([f"- {a}" for a in archivos])
     except Exception as e:
-        return f"[ERROR] No se pudo escanear el directorio del servidor: {str(e)}"
+        return f"[ERROR] No se pudo escanear el directorio: {str(e)}"
 
 def calcular_promedio_estrellas() -> str:
     """
@@ -104,7 +119,7 @@ def calcular_promedio_estrellas() -> str:
     Returns:
         str: Cadena de texto con el resultado del promedio exacto obtenido de las opiniones de los clientes.
     """
-    origen_json = "reseñas_enriquecidas.json"
+    origen_json = os.path.join(DIRECTORIO_SALIDA, "reseñas_enriquecidas.json")
     if not os.path.exists(origen_json):
         return "[FALLO] Archivo de datos no encontrado. Extraiga reseñas primero."
     try:
@@ -127,7 +142,7 @@ def contar_sentimientos_totales() -> str:
     Returns:
         str: Desglose cuantitativo detallado de opiniones positivas y negativas.
     """
-    origen_json = "reseñas_enriquecidas.json"
+    origen_json = os.path.join(DIRECTORIO_SALIDA, "reseñas_enriquecidas.json")
     if not os.path.exists(origen_json):
         return "[FALLO] Base documental ausente."
     try:
@@ -146,7 +161,7 @@ def obtener_reseña_mas_critica() -> str:
     Returns:
         str: El bloque estructurado con la opinión más severa del producto.
     """
-    origen_json = "reseñas_enriquecidas.json"
+    origen_json = os.path.join(DIRECTORIO_SALIDA, "reseñas_enriquecidas.json")
     if not os.path.exists(origen_json):
         return "[FALLO] No hay datos indexados."
     try:
@@ -182,11 +197,11 @@ def limpiar_cache_scraping() -> str:
     Returns:
         str: Confirmación de la purga técnica realizada en el backend.
     """
-    archivo_temporal = "reseñas_crudas.json"
+    archivo_temporal = os.path.join(DIRECTORIO_SALIDA, "reseñas_crudas.json")
     if os.path.exists(archivo_temporal):
         try:
             os.remove(archivo_temporal)
-            return "[MANTENIMIENTO] Cache e historial de recolección cruda eliminados con éxito."
+            return f"[MANTENIMIENTO] Cache e historial de recolección cruda en '{DIRECTORIO_SALIDA}' eliminados con éxito."
         except Exception as e:
             return f"[ERROR] No se pudo liberar el archivo temporal: {str(e)}"
     return "[INFO] El cache de scraping ya se encuentra completamente limpio."

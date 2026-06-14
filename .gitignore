@@ -1,18 +1,20 @@
-# Entorno virtual
+# Entornos virtuales y caché
 venv/
-.venv/
+__pycache__/
+*.pyc
 
-# Caché
-**/__pycache__/
+# Ignorar todo el contenido de las carpetas de datos...
+datos/base_relacional/*
+datos/base_vectorial/*
+datos/crudos/*
+datos/procesados/*
+sesion_playwright/*
 
-# Base de datos vectorial
-chroma_db/
+# ...EXCEPTO los archivos .gitkeep para conservar la estructura de carpetas
+!datos/base_relacional/.gitkeep
+!datos/base_vectorial/.gitkeep
+!datos/crudos/.gitkeep
+!datos/procesados/.gitkeep
+!sesion_playwright/.gitkeep
 
-# Sesión de Playwright (Le agregamos asterisco para asegurar)
-sesion_playwright/
-sesion_playwright/**
-
-# Archivos de datos
-reseñas_crudas.json
-reseñas_enriquecidas.json
 .env
