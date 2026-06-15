@@ -113,7 +113,7 @@ async def iniciar_flujo_completo():
         if os.path.exists(archivo_enriquecido): os.remove(archivo_enriquecido)
 
         extractor = ExtractorEspecifico(archivo_salida=archivo_crudo)
-        extractor.extraer(url_objetivo, scrolls=3)
+        await asyncio.to_thread(extractor.extraer, url_objetivo, scrolls=3)
 
         print("\n[PIPELINE] Clasificando y extrayendo metadatos estructurados...")
         clasificador = ClasificadorReseñas()

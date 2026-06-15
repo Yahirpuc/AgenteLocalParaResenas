@@ -12,7 +12,8 @@ from modulos.agente.asistente import AsistenteAnaliticoHibrido
 from main import inicializar_db_chat, cargar_historial, guardar_mensaje
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi import Depends
-from modulos.seguridad.autenticacion import obtener_hash_password, verificar_password, crear_token_acceso
+from modulos.seguridad.autenticacion import obtener_hash_password, verificar_password, crear_token_acceso, obtener_usuario_actual
+from modulos.rutas.herramientas_api import router as herramientas_router
 
 from modulos.infraestructura.clientes_sqlite import (
     crear_usuario, 
@@ -21,9 +22,8 @@ from modulos.infraestructura.clientes_sqlite import (
     obtener_mensajes_por_sesion   
 )
 
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi import Depends, HTTPException, status
-from jose import JWTError, jwt
+from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import FastAPI, HTTPException, status, Depends, Request
 
 # Importamos las variables y funciones de tu módulo de seguridad
 from modulos.seguridad.autenticacion import (
@@ -34,38 +34,28 @@ from modulos.seguridad.autenticacion import (
     ALGORITHM        # Importamos el algoritmo
 )
 
-# Contenedor global para el cerebro del asistente
-aplicacion_estado = {}
 
 @asynccontextmanager
 async def ciclo_vida_api(app: FastAPI):
-    """
-    Manejador de ciclo de vida (Lifespan). 
-    Carga los modelos en memoria y conecta las bases de datos una sola vez al iniciar,
-    evitando retrasos de I/O en cada petición HTTP.
-    """
     print("\n[STARTUP] Inicializando componentes globales del sistema...")
     try:
-        # 1. Asegurar persistencia relacional
         await inicializar_db_chat()
-        
-        # 2. Instanciar el cerebro híbrido (Carga Ollama y ChromaDB)
         ruta_db_local = os.path.join("datos", "base_vectorial")
         coleccion_local = "reviews_analizadas"
         
         asistente = AsistenteAnaliticoHibrido(ruta_db=ruta_db_local, nombre_coleccion=coleccion_local)
         
-        # Guardamos la instancia en el estado global de la aplicación
-        aplicacion_estado["asistente"] = asistente
+        # 2. GUARDAMOS EL ASISTENTE EN EL ESTADO NATIVO DE LA APP
+        app.state.asistente = asistente
         print("[STARTUP] Componentes listos. Servidor listo para recibir peticiones.\n")
     except Exception as e:
         print(f"[STARTUP ERROR] Falló la inicialización: {e}")
         raise e
         
     yield
-    # Limpieza al apagar el servidor (si fuera necesaria)
     print("\n[SHUTDOWN] Cerrando recursos del sistema.")
-    aplicacion_estado.clear()
+    # Limpiamos la memoria al apagar
+    app.state.asistente = None
 
 # Inicialización de FastAPI con su configuración de ciclo de vida
 app = FastAPI(
@@ -103,33 +93,17 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
+# DEPENDENCIA DEL ASISTENTE
+def obtener_asistente(request: Request) -> AsistenteAnaliticoHibrido:
+    """Extrae la instancia del asistente del estado global de forma segura."""
+    asistente = getattr(request.app.state, "asistente", None)
+    if not asistente:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
+            detail="El motor de IA no está inicializado."
+        )
+    return asistente
 
-# Le decimos a FastAPI dónde está la ruta para obtener el token (para la documentación de Swagger)
-esquema_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
-
-def obtener_usuario_actual(token: str = Depends(esquema_oauth2)):
-    """
-    Función Guardia: Intercepta el Token, lo desencripta y verifica si es válido.
-    Retorna el ID del usuario (sub) para usarlo en el endpoint.
-    """
-    excepcion_credenciales = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="No se pudieron validar las credenciales o el token ha expirado",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        # Intentamos abrir el candado del JWT
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        usuario_id: str = payload.get("sub")
-        
-        if usuario_id is None:
-            raise excepcion_credenciales
-            
-        return usuario_id
-        
-    except JWTError:
-        # Si el token es inventado, fue alterado o ya caducó, lanzamos el error
-        raise excepcion_credenciales
 
 # =====================================================================
 # ENDPOINTS DE AUTENTICACIÓN
@@ -198,26 +172,23 @@ async def obtener_historial_chat(
     return {"sesion_id": sesion_id, "mensajes": mensajes}
 
 # =====================================================================
+# INCLUSIÓN DE RUTAS DE HERRAMIENTAS (Protegidas por autenticación)
+# =====================================================================
+app.include_router(herramientas_router)
+
+# =====================================================================
 # ENDPOINTS / RUTAS DE LA API
 # =====================================================================
 
 @app.post("/api/chat")
 async def procesar_conversacion(
     peticion: PeticionMensaje,
-    usuario_id: str = Depends(obtener_usuario_actual) 
+    usuario_id: str = Depends(obtener_usuario_actual),
+    asistente: AsistenteAnaliticoHibrido = Depends(obtener_asistente) # Inyección nativa
 ):
     """
-    Endpoint de conversación compatible con LlamaIndex v0.14+ (Workflows).
-    Implementa Server-Sent Events (SSE) fragmentando la respuesta final 
-    para la "UI Estúpida" del frontend.
+    Endpoint de conversación asíncrono con Server-Sent Events (SSE).
     """
-    asistente: AsistenteAnaliticoHibrido = aplicacion_estado.get("asistente")
-    if not asistente:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
-            detail="El motor de IA no está inicializado."
-        )
-
     session_id = peticion.id_sesion.strip() if peticion.id_sesion else str(uuid.uuid4())[:8]
     historial_cargado = await cargar_historial(session_id)
     await guardar_mensaje(session_id, 'user', peticion.mensaje, usuario_id=usuario_id)
@@ -226,30 +197,21 @@ async def procesar_conversacion(
 
     async def generador_tokens():
         try:
-            # 1. Ejecutamos el flujo con la sintaxis correcta de Workflows v0.14
             resultado_flujo = await agente.run(peticion.mensaje)
             respuesta_texto = str(resultado_flujo)
             
-            # 2. Fragmentamos la respuesta (Chunking por palabra)
             palabras = respuesta_texto.split(" ")
             for i, palabra in enumerate(palabras):
-                # Reconstruimos el texto manteniendo los espacios
                 chunk = palabra if i == 0 else " " + palabra
-                
-                # Emitimos el chunk hacia el cliente React
                 yield chunk
-                
-                # Pequeño delay de 20ms para crear la animación de tecleo fluido en pantalla
                 await asyncio.sleep(0.02) 
 
-            # 3. Guardamos la respuesta final en SQLite
             await guardar_mensaje(session_id, 'assistant', respuesta_texto, usuario_id=usuario_id)
 
         except Exception as e:
             print(f"[API ERROR EN FLUJO] {e}")
             yield f"\n[Error del Agente: {str(e)}]"
 
-    # Enviamos el ID en los cabezales HTTP
     headers = {"X-Session-ID": session_id}
     
     return StreamingResponse(
@@ -257,4 +219,3 @@ async def procesar_conversacion(
         media_type="text/plain", 
         headers=headers
     )
-

@@ -92,16 +92,29 @@ class ExtractorEspecifico:
                     () => {
                         let data = [];
                         let bloques = document.querySelectorAll('[data-hook="review"]');
+                        let nodoProducto = document.querySelector('[data-hook="product-link"]');
+
+                        let tituloProducto = nodoProducto 
+                            ? nodoProducto.innerText.trim() 
+                            : document.title.replace(/Amazon.*?:\s*Opiniones de clientes:\s*/i, "").trim();
                         
                         bloques.forEach((bloque, i) => {
                             let elAutor = bloque.querySelector('.a-profile-name');
                             let elTitulo = bloque.querySelector('[data-hook="review-title"]');
                             let elTexto = bloque.querySelector('[data-hook="review-body"]');
                             let elEstrellas = bloque.querySelector('.a-icon-alt');
+                            
+                            // NUEVOS CAMPOS
+                            let elFecha = bloque.querySelector('[data-hook="review-date"]');
+                            let elVariante = bloque.querySelector('[data-hook="format-strip"]');
+                            let elVerificada = bloque.querySelector('[data-hook="avp-badge"]');
 
                             let autor = elAutor ? elAutor.innerText.trim() : "Comprador Anónimo";
                             let titulo = elTitulo ? elTitulo.innerText.trim() : "Opinión Extraída";
                             let texto = elTexto ? elTexto.innerText.trim() : "";
+                            let fecha = elFecha ? elFecha.innerText.trim() : "Fecha desconocida";
+                            let variante = elVariante ? elVariante.innerText.trim() : "Versión Estándar";
+                            let verificada = elVerificada ? true : false;
                             
                             if (titulo.includes("de 5 estrellas")) {
                                 titulo = titulo.split("\\n").pop();
@@ -116,10 +129,14 @@ class ExtractorEspecifico:
                             if (texto.length > 5) {
                                 data.push({
                                     "index": i,
+                                    "producto": tituloProducto, // Nuevo
                                     "autor": autor,
                                     "titulo_comentario": titulo,
                                     "texto": texto,
-                                    "estrellas": estrellas
+                                    "estrellas": estrellas,
+                                    "fecha_original": fecha,    // Nuevo
+                                    "variante": variante,       // Nuevo
+                                    "compra_verificada": verificada // Nuevo
                                 });
                             }
                         });
@@ -169,12 +186,15 @@ class ExtractorEspecifico:
                 for op in opiniones_detectadas:
                     reseñas_raspadas.append({
                         "id": f"{plataforma}_{datetime.now().strftime('%M%S')}_{op['index']}",
+                        "producto": op.get("producto", "Producto Desconocido"),
                         "autor": op["autor"],
                         "titulo_comentario": op["titulo_comentario"],
                         "texto": op["texto"],
                         "estrellas": op["estrellas"],
+                        "variante": op.get("variante", ""),
+                        "compra_verificada": op.get("compra_verificada", False),
                         "fuente": url,
-                        "fecha_publicacion": datetime.now().strftime("%Y-%m-%d")
+                        "fecha_publicacion": op.get("fecha_original", "") 
                     })
 
             except Exception as e:

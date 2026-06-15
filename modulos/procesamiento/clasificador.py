@@ -133,11 +133,14 @@ EJEMPLO DE SALIDA ESTRICTA:
 
             item_enriquecido = {
                 "id": id_final,
+                "producto": item.get("producto", "Producto Desconocido"), # ¡Añadir esto!
                 "autor": autor,
                 "titulo_comentario": titulo,
                 "texto": cuerpo_texto,
                 "estrellas": item.get("estrellas", None),
                 "fuente": item.get("fuente", "Desconocida"),
+                "variante": item.get("variante", ""),                     # ¡Añadir esto!
+                "compra_verificada": item.get("compra_verificada", False),# ¡Añadir esto!
                 "metadatos": {
                     "sentimiento": sentimiento_final,
                     "categoria": categoria_final,

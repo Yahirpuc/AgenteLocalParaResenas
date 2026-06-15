@@ -1,6 +1,9 @@
 from passlib.context import CryptContext
-from jose import jwt
+from jose import JWTError, jwt
 from datetime import datetime, timedelta
+from fastapi.security import OAuth2PasswordBearer
+from fastapi import HTTPException, status, Depends
+
 
 # =====================================================================
 # CONFIGURACIÓN DE SEGURIDAD
@@ -38,3 +41,27 @@ def crear_token_acceso(data: dict) -> str:
     
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+# =====================================================================
+# DEPENDENCIA DE VALIDACIÓN DE SESIÓN (EL GUARDIA)
+# =====================================================================
+esquema_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+def obtener_usuario_actual(token: str = Depends(esquema_oauth2)):
+    """
+    Función Guardia: Intercepta el Token, lo desencripta y verifica si es válido.
+    Retorna el ID del usuario (sub) para usarlo en el endpoint.
+    """
+    excepcion_credenciales = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="No se pudieron validar las credenciales o el token ha expirado",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        usuario_id: str = payload.get("sub")
+        if usuario_id is None:
+            raise excepcion_credenciales
+        return usuario_id
+    except JWTError:
+        raise excepcion_credenciales

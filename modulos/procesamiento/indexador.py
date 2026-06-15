@@ -92,10 +92,10 @@ class IndexadorRAG:
         )
         
         # SOLUCIÓN WINDOWS: Forzamos el cierre manual y el vaciado del caché de Chroma a disco
-        try:
-            db_cliente._system.stop() # Apaga los hilos persistentes del backend de SQLite de forma segura
-        except Exception:
-            pass
+        #try:
+        #    db_cliente._system.stop() # Apaga los hilos persistentes del backend de SQLite de forma segura
+        #except Exception:
+        #   pass
 
         print(f"[OK] Base de datos vectorial creada con éxito en la carpeta '{self.ruta_db}'.")
         return index
