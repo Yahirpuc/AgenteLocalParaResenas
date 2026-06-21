@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 import asyncio
 from fastapi import FastAPI, HTTPException, status
@@ -6,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from fastapi.responses import StreamingResponse
+from llama_index.core.agent.workflow import AgentStream
 
 # Importaciones de tu arquitectura modular
 from modulos.agente.asistente import AsistenteAnaliticoHibrido
@@ -16,7 +18,10 @@ from modulos.seguridad.autenticacion import obtener_hash_password, verificar_pas
 from modulos.rutas.herramientas_api import router as herramientas_router
 
 from modulos.infraestructura.clientes_sqlite import (
-    crear_usuario, 
+    crear_usuario,
+    eliminar_sesion_db,
+    guardar_registro_auditoria,
+    crear_tabla_auditoria,
     obtener_usuario_por_correo,
     obtener_sesiones_por_usuario,
     obtener_mensajes_por_sesion   
@@ -33,6 +38,7 @@ from modulos.seguridad.autenticacion import (
     SECRET_KEY,      # Importamos la llave para poder desencriptar
     ALGORITHM        # Importamos el algoritmo
 )
+from modulos.seguridad.guardrails import validar_prompt_seguro
 
 
 @asynccontextmanager
@@ -40,6 +46,9 @@ async def ciclo_vida_api(app: FastAPI):
     print("\n[STARTUP] Inicializando componentes globales del sistema...")
     try:
         await inicializar_db_chat()
+        await asyncio.to_thread(crear_tabla_auditoria)
+        print("[STARTUP] Tabla de auditoría verificada/creada.")
+
         ruta_db_local = os.path.join("datos", "base_vectorial")
         coleccion_local = "reviews_analizadas"
         
@@ -171,6 +180,24 @@ async def obtener_historial_chat(
         
     return {"sesion_id": sesion_id, "mensajes": mensajes}
 
+@app.delete("/api/sesiones/{sesion_id}")
+async def borrar_conversacion(
+    sesion_id: str, 
+    usuario_id: str = Depends(obtener_usuario_actual)
+):
+    """
+    Endpoint para que el usuario elimine un chat completo desde el frontend.
+    """
+    exito = await asyncio.to_thread(eliminar_sesion_db, sesion_id, usuario_id)
+    
+    if not exito:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La sesión no existe o no tienes permisos para eliminarla."
+        )
+        
+    return {"estado": "ok", "mensaje": f"Sesión {sesion_id} y sus mensajes eliminados correctamente."}
+
 # =====================================================================
 # INCLUSIÓN DE RUTAS DE HERRAMIENTAS (Protegidas por autenticación)
 # =====================================================================
@@ -184,29 +211,132 @@ app.include_router(herramientas_router)
 async def procesar_conversacion(
     peticion: PeticionMensaje,
     usuario_id: str = Depends(obtener_usuario_actual),
-    asistente: AsistenteAnaliticoHibrido = Depends(obtener_asistente) # Inyección nativa
+    asistente: AsistenteAnaliticoHibrido = Depends(obtener_asistente)
 ):
-    """
-    Endpoint de conversación asíncrono con Server-Sent Events (SSE).
-    """
     session_id = peticion.id_sesion.strip() if peticion.id_sesion else str(uuid.uuid4())[:8]
+    
+    # =====================================================================
+    # 🛡️ 1. CAPA DE VALIDACIÓN (GUARDRAILS)
+    # =====================================================================
+    es_seguro, mensaje_bloqueo = validar_prompt_seguro(peticion.mensaje)
+    
+    if not es_seguro:
+        # Guardamos el intento de ataque en el historial visible para el usuario
+        await guardar_mensaje(session_id, 'user', peticion.mensaje, usuario_id=usuario_id)
+        await guardar_mensaje(session_id, 'assistant', mensaje_bloqueo, usuario_id=usuario_id)
+        
+        # Registramos el evento de seguridad en la tabla de Observabilidad
+        await asyncio.to_thread(
+            guardar_registro_auditoria,
+            session_id=session_id,
+            user_prompt=peticion.mensaje,
+            system_response=mensaje_bloqueo,
+            ttft_ms=0.0,
+            total_latency_ms=0.0,
+            tokens_per_second=0.0,
+            was_blocked=True,  # 🚨 Marcamos que fue bloqueado
+            tools_executed=[]
+        )
+        
+        # Devolvemos el bloqueo inmediatamente usando un generador rápido (Fake streaming)
+        # para respetar la firma de StreamingResponse sin gastar CPU en la IA
+        async def generador_bloqueo():
+            yield mensaje_bloqueo
+            
+        return StreamingResponse(generador_bloqueo(), media_type="text/plain", headers={"X-Session-ID": session_id})
+
+    # =====================================================================
+    # 🧠 2. FLUJO NORMAL DEL AGENTE (Si el prompt es seguro)
+    # =====================================================================
     historial_cargado = await cargar_historial(session_id)
     await guardar_mensaje(session_id, 'user', peticion.mensaje, usuario_id=usuario_id)
 
     agente = asistente.iniciar_sesion_agente(historial_cargado=historial_cargado)
 
     async def generador_tokens():
+        # INICIAMOS EL CRONÓMETRO GLOBAL
+        tiempo_inicio = time.time()
+        tiempo_primer_token = None
+        conteo_tokens = 0
+        
+        # === NUEVAS VARIABLES DE ESTADO PARA EL FILTRO ReAct ===
+        is_streaming_answer = False
+        buffer_texto = ""
+        
         try:
-            resultado_flujo = await agente.run(peticion.mensaje)
-            respuesta_texto = str(resultado_flujo)
+            manejador = agente.run(peticion.mensaje)
             
-            palabras = respuesta_texto.split(" ")
-            for i, palabra in enumerate(palabras):
-                chunk = palabra if i == 0 else " " + palabra
-                yield chunk
-                await asyncio.sleep(0.02) 
+            async for evento in manejador.stream_events():
+                nombre_clase = type(evento).__name__
+                
+                # -------------------------------------------------------------
+                # 1. INTERCEPTOR PARA LA UX (Spinner de herramientas)
+                # -------------------------------------------------------------
+                if nombre_clase == "ToolCall":
+                    nombre_herramienta = getattr(evento, "tool_name", "herramienta_local")
+                    yield f"[[SYS_TOOL:{nombre_herramienta}]]"
+                    
+                # -------------------------------------------------------------
+                # 2. FILTRO ReAct Y STREAMING AL FRONTEND
+                # -------------------------------------------------------------
+                elif isinstance(evento, AgentStream):
+                    if not is_streaming_answer:
+                        # Acumulamos la "cháchara mental" (Pensamientos y Acciones) en secreto
+                        buffer_texto += evento.delta
+                        
+                        # Buscamos el marcador de la respuesta final del prompt maestro
+                        if "Answer:" in buffer_texto or "Respuesta:" in buffer_texto:
+                            is_streaming_answer = True
+                            
+                            # AHORA SÍ: El modelo va a empezar a responder.
+                            # Disparamos el cronómetro de telemetría y apagamos el spinner de React.
+                            if tiempo_primer_token is None:
+                                tiempo_primer_token = time.time()
+                                yield "[[SYS_STREAM_START]]"
+                            
+                            # Extraemos lo que sea que haya generado justo después del "Answer:"
+                            separador = "Answer:" if "Answer:" in buffer_texto else "Respuesta:"
+                            texto_limpio = buffer_texto.split(separador)[-1].lstrip()
+                            
+                            if texto_limpio:
+                                conteo_tokens += 1
+                                yield texto_limpio
+                    else:
+                        # Si ya pasamos la fase de pensamiento, transmitimos cada token normalmente
+                        conteo_tokens += 1
+                        yield evento.delta
+                        
+            # Finaliza la generación y guardamos el mensaje completo en BD
+            resultado_final = await manejador
+            texto_completo = str(resultado_final)
+            await guardar_mensaje(session_id, 'assistant', texto_completo, usuario_id=usuario_id)
 
-            await guardar_mensaje(session_id, 'assistant', respuesta_texto, usuario_id=usuario_id)
+            # -------------------------------------------------------------
+            # 3. CÁLCULO DE MÉTRICAS EXACTAS Y GUARDADO DE AUDITORÍA
+            # -------------------------------------------------------------
+            tiempo_fin = time.time()
+            if tiempo_primer_token:
+                ttft_ms = (tiempo_primer_token - tiempo_inicio) * 1000
+                total_latency_ms = (tiempo_fin - tiempo_inicio) * 1000
+                tiempo_generacion_activa = tiempo_fin - tiempo_primer_token
+                
+                tps = conteo_tokens / tiempo_generacion_activa if tiempo_generacion_activa > 0 else 0
+                
+                await asyncio.to_thread(
+                    guardar_registro_auditoria,
+                    session_id=session_id,
+                    user_prompt=peticion.mensaje,
+                    system_response=texto_completo,
+                    ttft_ms=round(ttft_ms, 2),
+                    total_latency_ms=round(total_latency_ms, 2),
+                    tokens_per_second=round(tps, 2),
+                    was_blocked=False, 
+                    tools_executed=[] 
+                )
+
+        except Exception as e:
+            print(f"[API ERROR EN FLUJO] {e}")
+            yield f"\n[Error del Agente: {str(e)}]"
 
         except Exception as e:
             print(f"[API ERROR EN FLUJO] {e}")

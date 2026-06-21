@@ -2,6 +2,9 @@ import sqlite3
 import os
 import uuid
 from llama_index.core.llms import ChatMessage, MessageRole
+import json
+import time
+from datetime import datetime
 
 
 # Ruta global de la base de datos
@@ -202,6 +205,69 @@ def obtener_mensajes_por_sesion(sesion_id: str, usuario_id: str) -> list:
     
     return [{"rol": fila[0], "contenido": fila[1], "creado_en": fila[2]} for fila in filas]
 
+def eliminar_sesion_db(sesion_id: str, usuario_id: str) -> bool:
+    """
+    Elimina una sesión específica verificando que pertenezca al usuario actual.
+    Por la regla ON DELETE CASCADE, esto purga también todos los mensajes asociados.
+    """
+    conn = sqlite3.connect(RUTA_DB_RELACIONAL)
+    c = conn.cursor()
+    
+    # Intentamos borrar donde coincidan el ID de la sesión y el dueño
+    c.execute('DELETE FROM sesiones WHERE id = ? AND usuario_id = ?', (sesion_id, usuario_id))
+    
+    # rowcount nos dice cuántas filas fueron afectadas. Si es > 0, se borró con éxito.
+    filas_borradas = c.rowcount
+    
+    conn.commit()
+    conn.close()
+    
+    return filas_borradas > 0
+
+# Añade esta función para que se ejecute cuando inicializas tu base de datos
+def crear_tabla_auditoria():
+    conn = sqlite3.connect(RUTA_DB_RELACIONAL)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS auditoria (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            timestamp TEXT,
+            user_prompt TEXT,
+            system_response TEXT,
+            ttft_ms REAL,
+            total_latency_ms REAL,
+            tokens_per_second REAL,
+            was_blocked BOOLEAN,
+            tools_executed TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def guardar_registro_auditoria(
+    session_id: str, user_prompt: str, system_response: str, 
+    ttft_ms: float, total_latency_ms: float, tokens_per_second: float, 
+    was_blocked: bool = False, tools_executed: list = []
+):
+    """Guarda las métricas de rendimiento en la tabla de auditoría."""
+    conn = sqlite3.connect(RUTA_DB_RELACIONAL)
+    c = conn.cursor()
+    
+    registro_id = str(uuid.uuid4())
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    tools_json = json.dumps(tools_executed) # Convertimos la lista de herramientas a JSON
+    
+    c.execute('''
+        INSERT INTO auditoria 
+        (id, session_id, timestamp, user_prompt, system_response, ttft_ms, total_latency_ms, tokens_per_second, was_blocked, tools_executed)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (registro_id, session_id, timestamp, user_prompt, system_response, ttft_ms, total_latency_ms, tokens_per_second, was_blocked, tools_json))
+    
+    conn.commit()
+    conn.close()
+
 # Puedes ejecutar esto directamente para crear las tablas
 if __name__ == "__main__":
     inicializar_base_datos()
+    crear_tabla_auditoria()
