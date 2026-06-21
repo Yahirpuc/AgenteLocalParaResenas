@@ -1,9 +1,25 @@
-﻿playwright
-chromadb
-llama-index-core
+﻿# --- Framework Web y Servidor ---
+fastapi
+uvicorn
+python-multipart
+
+# --- Seguridad y Autenticación ---
+passlib[bcrypt]
+python-jose[cryptography]
+
+# --- Ecosistema LlamaIndex y RAG ---
+llama-index-core>=0.14.0
 llama-index-vector-stores-chroma
 llama-index-llms-ollama
 llama-index-embeddings-ollama
-rank-bm25
-pymupdf4llm
 llama-index-retrievers-bm25
+
+# --- Bases de Datos y Búsqueda ---
+chromadb>=0.4.22
+rank-bm25
+
+# --- Extracción Web ---
+playwright
+
+# --- Otras utilidades (Opcional) ---
+pymupdf4llm
