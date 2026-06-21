@@ -1,472 +1,142 @@
-# 🧠 Agente Local de Analítica de Reseñas (Smart RAG Engine)
+# 🧠 Agente Local de Analítica de Reseñas (Smart RAG Engine + API)
 
-Sistema profesional de procesamiento, enriquecimiento y análisis de lenguaje natural orientado a auditorías de producto, inteligencia comercial y análisis de opiniones en plataformas de comercio electrónico.
+Sistema profesional de procesamiento, enriquecimiento y análisis de lenguaje natural orientado a auditorías de producto, inteligencia comercial y análisis de opiniones. 
 
-El proyecto opera bajo un entorno **100% local, privado y libre de dependencias externas de inferencia**, garantizando:
+El proyecto opera bajo una **Arquitectura de Microservicios Web** (FastAPI) en un entorno **100% local, privado y libre de dependencias externas de inferencia**, garantizando:
 
-* Máxima confidencialidad de datos.
-* Costo operativo prácticamente nulo.
-* Persistencia local de embeddings, registros y sesiones.
-* Inferencia completamente offline mediante Ollama.
-* Control total sobre el ciclo de vida de la información procesada.
+* Máxima confidencialidad de datos (Seguridad JWT y Hasheo Bcrypt).
+* Costo operativo nulo (Inferencia completamente offline mediante Ollama).
+* Streaming de Tokens en Tiempo Real (Server-Sent Events).
+* Observabilidad y telemetría de rendimiento local (TTFT, TPS).
+* Protección contra Inyección de Prompts (Guardrails).
 
 ---
 
-# 🏗️ 1. Arquitectura General y Flujo de Datos
+## 🏗️ 1. Arquitectura General y Flujo de Datos
 
-El pipeline se encuentra desacoplado en múltiples fases especializadas: extracción estructurada, enriquecimiento semántico mediante LLM, indexación híbrida y recuperación inteligente con soporte para Function Calling local.
+El pipeline ha evolucionado de un script de terminal a un Backend robusto desacoplado en dominios. La entrada principal ahora es web (`api.py`), que gestiona la seguridad, delega la búsqueda híbrida y transmite la respuesta en tiempo real al Frontend (React).
 
 ```text
                         ┌──────────────────────────────┐
-                        │       python main.py         │
+                        │      Frontend (React)        │
                         └──────────────┬───────────────┘
-                                       │
-                    [¿Existe Base de Datos Vectorial?]
-                       /                           \
-             (No / Comando /reiniciar)             (Sí)
-                    /                                 \
-                   ▼                                   ▼
-       ┌────────────────────────┐        ┌────────────────────────┐
-       │ extractor_especifico   │        │      asistente.py      │
-       │ (Selectores Nativos)   │        │   Chat Interactivo     │
-       └────────────┬───────────┘        └────────────▲───────────┘
-                    │                                │
-                    ▼                                │
-         (reseñas_crudas.json)                       │
-                    │                                │
-                    ▼                                │
-       ┌────────────────────────┐                    │
-       │    clasificador.py     │                    │
-       │ (Inferencia con Qwen)  │                    │
-       └────────────┬───────────┘                    │
-                    │                                │
-                    ▼                                │
-     (reseñas_enriquecidas.json)                     │
-                    │                                │
-                    ▼                                │
-       ┌────────────────────────┐                    │
-       │      indexador.py      │────────────────────┘
-       │   ChromaDB + Cosine    │
-       └────────────────────────┘
+                                  (HTTP / SSE)
+                                       ▼
+                        ┌──────────────────────────────┐
+                        │       api.py (FastAPI)       │
+                        │    [Orquestador Central]     │
+                        └──────┬───────────────┬───────┘
+                               │               │
+                     [Autenticación JWT]  [Guardrails] 
+                               │               │
+                               ▼               ▼
+                   ┌───────────────────────────────────┐
+                   │    modulos/agente/asistente.py    │
+                   │    (Flujo LlamaIndex Workflows)   │
+                   └───────┬───────────────────┬───────┘
+                           │                   │
+                           ▼                   ▼
+           ┌───────────────────────┐   ┌───────────────────────┐
+           │ modulos/rutas/        │   │ modulos/              │
+           │ herramientas_api.py   │   │ procesamiento/        │
+           │ (Músculos y Reportes) │   │ (Indexador Híbrido)   │
+           └───────────────────────┘   └───────────────────────┘
 ```
 
-### Evolución de la Arquitectura
+## 📁 2. Estructura Limpia del Proyecto (Domain-Driven Design)
 
-El proyecto incorpora además un módulo experimental denominado:
+El código se organiza bajo el Principio de Responsabilidad Única (SRP):
 
 ```text
-extractor_universal.py
+AgenteLocalParaResenas/
+│
+├── api.py                    # 🚪 PUERTA WEB: Servidor FastAPI, Autenticación y SSE.
+├── main.py                   # 🖥️ PUERTA CLI: Ejecución y pruebas en terminal local.
+│
+├── datos/                    # 🗄️ CAPA DE PERSISTENCIA
+│   ├── base_relacional/      #   └── historial_sesiones.db (Usuarios, Mensajes, Auditoría)
+│   ├── base_vectorial/       #   └── chroma.sqlite3 (Embeddings)
+│   ├── crudos/               #   └── reseñas_crudas.json
+│   └── procesados/           #   └── reseñas_enriquecidas.json
+│
+└── modulos/                  # 🧠 CAPA DE NEGOCIO Y DOMINIOS
+    │
+    ├── agente/               # 🤖 DOMINIO DE IA (asistente.py, herramientas.py)
+    ├── infraestructura/      # 🔌 DOMINIO DE BD (clientes_sqlite.py)
+    ├── procesamiento/        # ⚙️ DOMINIO ETL (extractor.py, clasificador.py, indexador.py)
+    ├── rutas/                # 🛣️ DOMINIO DE API (herramientas_api.py)
+    └── seguridad/            # 🛡️ DOMINIO DE PROTECCIÓN (autenticacion.py, guardrails.py)
 ```
 
-Este componente se encuentra actualmente en fase de investigación y pruebas avanzadas. Su objetivo es reemplazar la dependencia de selectores específicos mediante técnicas heurísticas capaces de identificar reseñas en cualquier sitio web de forma automática.
+## 🔄 3. Fases del Pipeline de Datos
 
-Actualmente, el entorno de producción utiliza `extractor_especifico.py` por su mayor estabilidad y precisión. Sin embargo, `extractor_universal.py` representa la siguiente etapa evolutiva del proyecto y será integrado en versiones futuras como motor de extracción multiplataforma.
+* **Extracción (Scraping):** Obtención del DOM (Amazon/MercadoLibre) vía Playwright.
+* **Enriquecimiento Semántico:** Clasificación de sentimientos y categorías vía Qwen 2.5 local.
+* **Indexación Vectorial:** Generación de embeddings con `nomic-embed-text` hacia ChromaDB usando similitud de coseno.
+* **Recuperación Inteligente (Híbrida):** Búsqueda Vectorial + Búsqueda Léxica (BM25) fusionadas mediante Reciprocal Rank Fusion (RRF).
 
----
+## 🛡️ 4. Seguridad, UX y Observabilidad (Fase Avanzada)
 
-# 🔄 2. Fases del Pipeline
+El sistema integra características propias de Machine Learning Operations (MLOps):
 
-## Fase 1 — Extracción de Datos Crudos
+* **Autenticación Stateless:** Tokens JWT (JSON Web Tokens) y contraseñas hasheadas en bcrypt. Eliminación en cascada de historiales de chat.
+* **Guardrails (Capa de Validación):** Middleware que intercepta Prompt Injections ("Olvida tus instrucciones") bloqueando la solicitud antes de gastar procesamiento en la IA.
+* **Telemetría en SQLite (Auditoría):** Registro automático y milimétrico de:
+  * `ttft_ms`: Time To First Token (Latencia de inicio).
+  * `tokens_per_second`: Velocidad de inferencia del procesador.
+  * `total_latency_ms` y bloqueos de seguridad.
+* **Streaming SSE Real y Filtro ReAct:** Transmisión asíncrona de tokens nativa. El backend oculta la "cháchara mental" del modelo (Thoughts/Actions) y emite banderas `[[SYS_TOOL]]` y `[[SYS_STREAM_START]]` para que el frontend renderice esqueletos de carga dinámicos.
 
-Obtención de información directamente desde el DOM de la plataforma de comercio electrónico.
+## 🛠️ 5. Requisitos e Instalación
 
-**Entrada:**
-
-```text
-Página web del producto
-```
-
-**Salida:**
-
-```text
-reseñas_crudas.json
-```
-
-El archivo contiene exclusivamente información original extraída de los comentarios de los usuarios sin ningún procesamiento semántico adicional.
-
----
-
-## Fase 2 — Enriquecimiento Semántico
-
-Procesamiento del dataset mediante un modelo local ejecutado en Ollama.
-
-Durante esta fase, el sistema analiza cada reseña y genera metadatos estructurados.
-
-### Información generada
-
-#### Sentimiento
-
-Clasificación estricta en:
-
-* Positivo
-* Neutral
-* Negativo
-
-#### Categoría Semántica
-
-Asignación automática a categorías como:
-
-* Rendimiento y Caídas
-* Diseño e Interfaz
-* Materiales y Durabilidad
-* Precio y Valor
-* Logística y Envío
-* Calidad General
-* Experiencia de Usuario
-* Compatibilidad
-* Instalación y Configuración
-
-**Salida:**
-
-```text
-reseñas_enriquecidas.json
-```
-
----
-
-## Fase 3 — Indexación Vectorial
-
-Conversión de documentos enriquecidos en representaciones vectoriales para recuperación semántica.
-
-Tecnologías utilizadas:
-
-* ChromaDB
-* LlamaIndex
-* nomic-embed-text
-
-Persistencia:
-
-```text
-/chroma_db
-```
-
----
-
-## Fase 4 — Recuperación Inteligente
-
-Combinación de múltiples estrategias de búsqueda:
-
-### Recuperación Vectorial
-
-Captura contexto, intención y similitud semántica.
-
-### Recuperación Léxica (BM25)
-
-Prioriza coincidencias exactas de palabras clave.
-
-### Reciprocal Rank Fusion (RRF)
-
-Fusiona ambos resultados para maximizar precisión y relevancia.
-
----
-
-# 🧩 3. Componentes del Ecosistema
-
-## 🎛️ `main.py` (Orquestador Central)
-
-Punto de entrada principal de la aplicación.
-
-Responsabilidades:
-
-* Verificar la existencia de la base vectorial persistente.
-* Automatizar el flujo completo de extracción, clasificación e indexación.
-* Reducir los tiempos de inicio cuando ya existen datos indexados.
-* Gestionar el comando `/reiniciar`.
-* Implementar mecanismos de protección contra bloqueos de SQLite en Windows.
-
----
-
-## 🕷️ `extractor_especifico.py`
-
-Motor de extracción basado en Playwright y selectores nativos.
-
-### Amazon México
-
-* Extracción mediante nodos `[data-hook="review"]`.
-* Eliminación de ruido visual y elementos decorativos.
-
-### Mercado Libre
-
-* Lectura automática de comentarios.
-* Interpretación de puntuaciones mediante atributos `aria-label`.
-* Expansión automática de todos los botones **"Leer más"** antes del análisis del DOM.
-
-Salida:
-
-```text
-reseñas_crudas.json
-```
-
----
-
-## 🧠 `clasificador.py`
-
-Módulo de enriquecimiento semántico ejecutado localmente mediante Qwen.
-
-Funciones:
-
-* Clasificación de sentimiento.
-* Categorización temática.
-* Normalización de datos.
-* Generación de metadatos estructurados.
-
-Salida:
-
-```text
-reseñas_enriquecidas.json
-```
-
----
-
-## 🗄️ `indexador.py`
-
-Constructor del índice híbrido.
-
-Características:
-
-* Delimitación estricta de documentos.
-* Prevención de contaminación contextual.
-* Persistencia vectorial local.
-* Configuración explícita de similitud coseno.
-
-```python
-{"hnsw:space": "cosine"}
-```
-
----
-
-## 💬 `asistente.py`
-
-Motor principal de recuperación y generación.
-
-Implementa:
-
-* Recuperación vectorial.
-* Recuperación BM25.
-* Fusión RRF.
-* Routing por metadatos.
-* Function Calling local.
-
----
-
-# 🛠️ 4. Requisitos del Sistema
-
-## Ollama
-
-Instalar Ollama y descargar los modelos requeridos:
-
+### Ollama (Modelos Locales)
 ```bash
-# Modelo principal de clasificación y análisis
 ollama pull qwen2.5:1.5b
-
-# Modelo de embeddings
 ollama pull nomic-embed-text
 ```
 
----
-
-## Dependencias Python
-
+### Dependencias Python
 ```text
+fastapi
+uvicorn
+passlib[bcrypt]
+python-jose[cryptography]
 chromadb>=0.4.22
-llama-index-core
+llama-index-core>=0.14.0
 llama-index-vector-stores-chroma
 llama-index-embeddings-ollama
 llama-index-llms-ollama
 llama-index-retrievers-bm25
-rank_bm25
-bm25s
 playwright
 ```
 
----
+### Despliegue Local
 
-# 🚀 5. Instalación y Despliegue
-
-## Crear entorno virtual
-
+1. **Entorno Virtual:** `python -m venv venv` y actívalo (`.\venv\Scripts\Activate.ps1`).
+2. **Instalación:** `pip install -r requirements.txt` y `playwright install chromium`.
+3. **Levantar Servidor API (FastAPI):**
 ```bash
-python -m venv venv
-```
+   uvicorn api:app --reload
+   ```
+   *La API estará disponible en `http://127.0.0.1:8000`.*
 
-### Windows
+## 🎮 6. Interacción y Function Calling Local
 
-```bash
-.\venv\Scripts\Activate.ps1
-```
+El Agente no solo platica, también ejecuta código Python físico en la computadora del host dependiendo de la necesidad:
 
-### Linux / macOS
+* **Herramientas Internas (Vía Chat):** El LLM usa `analizador_de_resenas` para navegar por ChromaDB.
+* **Herramientas Externas (Vía API Endpoints):** El Frontend puede disparar rutas como `/api/herramientas/exportar-csv` para interactuar con archivos en Windows sin despertar al modelo de IA, ahorrando ciclos de CPU.
 
-```bash
-source venv/bin/activate
-```
+### Exportación Compatible
+Los archivos CSV generados inyectan BOM (`utf-8-sig`) para compatibilidad perfecta con acentos y eñes en Microsoft Excel.
 
----
+## 📌 Stack Tecnológico
 
-## Instalar dependencias
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-## Instalar Chromium
-
-```bash
-playwright install chromium
-```
-
----
-
-## Ejecutar el sistema
-
-```bash
-python main.py
-```
-
----
-
-# 🎮 6. Interfaz del Chat e Intercepción de Acciones
-
-Prompt principal:
-
-```text
-Pregunta sobre las reseñas >
-```
-
-## Filtros RAG por Metadatos
-
-| Comando      | Acción                                                     |
-| ------------ | ---------------------------------------------------------- |
-| `/interfaz`  | Filtra exclusivamente la categoría Diseño e Interfaz       |
-| `/funcion`   | Filtra Rendimiento y Caídas                                |
-| `/negativos` | Filtra únicamente opiniones negativas                      |
-| `/reiniciar` | Reinicia completamente el entorno y solicita una nueva URL |
-
----
-
-## Function Calling Local
-
-El sistema puede interceptar solicitudes específicas y ejecutar herramientas Python en lugar de generar una respuesta tradicional.
-
-### Ejemplos
-
-```text
-cuenta los sentimientos totales
-→ contar_sentimientos_totales()
-
-calcula el promedio de estrellas
-→ calcular_promedio_estrellas()
-
-exporta las opiniones a CSV
-→ exportar_analisis_csv()
-
-guarda un reporte en TXT
-→ guardar_reporte_txt()
-```
-
-### Exportación Compatible con Excel
-
-Los archivos CSV son generados utilizando:
-
-```text
-utf-8-sig
-```
-
-Esto garantiza compatibilidad completa con Microsoft Excel, preservando correctamente:
-
-* Acentos
-* Ñ y ñ
-* Caracteres especiales
-* Separación correcta de columnas
-
----
-
-# 🛡️ 7. Sistema Anti-Alucinación
-
-El agente opera bajo un prompt de sistema estricto basado en ChatML.
-
-Cuando no exista evidencia suficiente dentro del contexto recuperado, responderá obligatoriamente:
-
-> "No se cuenta con registros suficientes en las opiniones indexadas para responder a esta consulta específica."
-
-No se permite inferir, inventar ni extrapolar información fuera de los documentos recuperados.
-
----
-
-# 📁 Estructura del Proyecto
-
-```text
-proyecto-rag/
-│
-├── main.py
-├── extractor_especifico.py
-├── extractor_universal.py
-├── clasificador.py
-├── indexador.py
-├── asistente.py
-├── funciones_locales.py
-│
-├── reseñas_crudas.json
-├── reseñas_enriquecidas.json
-│
-├── chroma_db/
-├── sesion_playwright/
-│
-├── requirements.txt
-└── README.md
-```
-
----
-
-# 🔒 Características Principales
-
-* Procesamiento completamente local.
-* Arquitectura RAG híbrida empresarial.
-* Recuperación Vectorial + BM25 + RRF.
-* Function Calling local.
-* Persistencia de sesiones Playwright.
-* Compatibilidad con Windows, Linux y macOS.
-* Protección contra bloqueos SQLite.
-* Exportación de reportes analíticos.
-* Sin dependencias de APIs externas.
-* Costo operativo cero.
-
----
-
-# 📌 Stack Tecnológico
-
-| Tecnología       | Función                      |
-| ---------------- | ---------------------------- |
-| Python           | Backend principal            |
-| Ollama           | Inferencia local             |
-| Qwen 2.5         | Clasificación y análisis NLP |
-| nomic-embed-text | Embeddings semánticos        |
-| ChromaDB         | Base de datos vectorial      |
-| LlamaIndex       | Orquestación RAG             |
-| BM25             | Recuperación léxica          |
-| Playwright       | Automatización web           |
-| SQLite           | Persistencia local           |
-
----
-
-# ✅ Estado del Proyecto
-
-### Estado Actual
-
-* Extracción estructurada estable.
-* Clasificación semántica operativa.
-* Recuperación híbrida implementada.
-* Function Calling local funcional.
-* Persistencia vectorial consolidada.
-
-### Próximas Iteraciones
-
-* Integración completa de `extractor_universal.py`.
-* Expansión de categorías semánticas.
-* Dashboards analíticos locales.
-* Generación automática de reportes ejecutivos.
-* Soporte para múltiples plataformas de comercio electrónico.
-
-Proyecto preparado para escenarios académicos, auditorías empresariales, inteligencia competitiva y sistemas RAG privados de producción.
+| Dominio | Tecnología |
+|---|---|
+| **Backend API** | FastAPI, Uvicorn, Python 3.11+ |
+| **Seguridad** | JWT, Passlib (Bcrypt), Middlewares |
+| **Inferencia** | Ollama, Qwen 2.5 (1.5B), Nomic Embeddings |
+| **RAG / NLP** | LlamaIndex Workflows, ChromaDB, BM25 |
+| **Persistencia** | SQLite (Relacional), Chroma (Vectorial) |
+| **ETL / Web** | Playwright |
