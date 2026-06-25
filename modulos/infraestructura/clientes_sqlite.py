@@ -71,30 +71,37 @@ def inicializar_base_datos():
 # OPERACIONES CRUD PARA EL HISTORIAL DE CHAT
 # =====================================================================
 
-def crear_sesion_si_no_existe(sesion_id: str, usuario_id: str = "usuario_default"):
+def crear_sesion_si_no_existe(sesion_id: str, usuario_id: str = "usuario_default", primer_mensaje: str = None):
     """
-    Verifica si la sesión existe. Si no, la crea.
-    Por ahora usamos un 'usuario_default' hasta conectar el Login.
+    Verifica si la sesión existe. Si no, la crea con un título dinámico estilo ChatGPT.
     """
     conn = sqlite3.connect(RUTA_DB_RELACIONAL)
     conn.execute("PRAGMA foreign_keys = ON;")
     c = conn.cursor()
     
-    # 1. Asegurarnos de que el usuario por defecto exista (Para que no falle la llave foránea)
+    # Asegurarnos de que el usuario por defecto exista
     c.execute('''INSERT OR IGNORE INTO usuarios (id, correo, password_hash) 
                  VALUES (?, ?, ?)''', (usuario_id, "admin@test.com", "hash_falso"))
     
-    # 2. Crear la sesión si no existe
+    # 📝 Si viene el primer mensaje, generamos el título dinámico
+    if primer_mensaje:
+        palabras = primer_mensaje.split()
+        # Tomamos las primeras 5 palabras y agregamos puntos suspensivos si es largo
+        titulo_chat = " ".join(palabras[:5]) + ("..." if len(palabras) > 5 else "")
+    else:
+        titulo_chat = "Nueva Conversación"
+    
+    # Insertamos la sesión usando el título dinámico generado
     c.execute('''INSERT OR IGNORE INTO sesiones (id, usuario_id, titulo) 
-                 VALUES (?, ?, ?)''', (sesion_id, usuario_id, "Nueva Conversación"))
+                 VALUES (?, ?, ?)''', (sesion_id, usuario_id, titulo_chat))
     
     conn.commit()
     conn.close()
 
 def guardar_mensaje(sesion_id: str, rol: str, contenido: str, usuario_id: str = "usuario_default"):
-    """Inserta un nuevo mensaje y lo ata al usuario real."""
-    # Le pasamos el usuario_id real a la creación de la sesión
-    crear_sesion_si_no_existe(sesion_id, usuario_id)
+    """Inserta un nuevo mensaje e inicializa la sesión con el título dinámico."""
+    # 🚀 Pasamos el contenido si el rol es 'user' (la primera pregunta)
+    crear_sesion_si_no_existe(sesion_id, usuario_id, primer_mensaje=contenido if rol == 'user' else None)
     
     conn = sqlite3.connect(RUTA_DB_RELACIONAL)
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -105,7 +112,6 @@ def guardar_mensaje(sesion_id: str, rol: str, contenido: str, usuario_id: str = 
     
     conn.commit()
     conn.close()
-
 def cargar_historial(sesion_id: str):
     """Recupera el historial y lo formatea para LlamaIndex."""
     conn = sqlite3.connect(RUTA_DB_RELACIONAL)

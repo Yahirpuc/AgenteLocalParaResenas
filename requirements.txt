@@ -4,7 +4,9 @@ uvicorn
 python-multipart
 
 # --- Seguridad y Autenticación ---
-passlib[bcrypt]
+# --- Seguridad y Autenticación (Actualizado para Python 3.13+) ---
+passlib
+bcrypt==4.0.1
 python-jose[cryptography]
 
 # --- Ecosistema LlamaIndex y RAG ---
