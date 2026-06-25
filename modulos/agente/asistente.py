@@ -69,10 +69,20 @@ class AsistenteAnaliticoHibrido:
             metadata=ToolMetadata(
                 name="analizador_de_resenas",
                 description=(
-                    "HERRAMIENTA DE BÚSQUEDA. Úsala SOLO para buscar información en la base de datos sobre el producto. "
-                    "REGLA VITAL: El argumento 'input' debe ser ÚNICAMENTE 1 o 2 palabras clave físicas (ej. 'batería', 'sonido', 'tornillos'). "
-                    "REGLA DE RESUMEN: Si el usuario pide un resumen general, usa la palabra clave 'calidad' o 'producto'. "
-                    "NUNCA pases preguntas completas, ni palabras abstractas como 'general', 'resumen' u 'opinión'."
+                    "CRITICAL SEARCH TOOL. Úsala para buscar ABSOLUTAMENTE TODO lo relacionado con los productos: "
+                    "opiniones, quejas, fallas de hardware, durabilidad, rendimiento técnico, estado del empaque, "
+                    "logística de envío, problemas de entrega, satisfacción general o cualquier detalle mencionado en las reseñas.\n"
+                    "ORDEN DE ENRUTAMIENTO GENÉRICO: Si te estoy saludando, haciendo charla casual, preguntando quién eres "
+                    "o pidiéndote tareas sobre el texto que ya tienes en pantalla, NO uses esta herramienta; "
+                    "responde directamente usando tu memoria de forma inmediata.\n"
+                    "BLINDAJE ANTI-ALUCINACIÓN: Si la herramienta no devuelve registros válidos o retorna texto vacío, "
+                    "debes decirme textualmente: 'No cuento con registros suficientes para esa consulta.' "
+                    "Está estrictamente prohibido inventar características o asumir datos que no estén escritos.\n"
+                    "REGLA DE IDIOMA Y TRATO DIRECTO: Háblame SIEMPRE en español de forma directa a mí ('Tú / Usted'). "
+                    "Queda totalmente prohibido usar el inglés o responder con frases explicativas en tercera persona como "
+                    "'para que el usuario analice' o 'el usuario solicita'. Contéstame a mí de forma concisa.\n"
+                    "REGLA DE ARGUMENTO: El parámetro 'input' debe ser obligatoriamente una o dos palabras clave atómicas "
+                    "y en minúsculas (ej. 'batería', 'empaque', 'envío', 'calidad')."
                 )
             )
         )
@@ -84,10 +94,20 @@ class AsistenteAnaliticoHibrido:
             
         memoria_agente = ChatMemoryBuffer.from_defaults(chat_history=historial_cargado, token_limit=3000)
         
-        # --- PROMPT DEFENSIVO INTEGRADO DE LA RAMA EXTERNA ---
-        # --- PROMPT DEFENSIVO Y AUTÓNOMO OPTIMIZADO ---
+        # --- PROMPT DEFENSIVO, AUTÓNOMO Y DE CORRECCIÓN DE CONDUCTA ---
+      # --- PROMPT DEFENSIVO, DE CONDUCTA Y CONTROL DE RESPUESTA FINAL ---
         contexto_sistema = (
-            "Eres un Analista Técnico Experto evaluando productos. Piensa, razona y responde SIEMPRE en Español.\n"
+            "Eres el Analista Técnico Experto oficial de Ordevs Soluciones. Piensa, razona y responde SIEMPRE en Español.\n\n"
+            "REGLA MÁXIMA DE COMPORTAMIENTO Y CONDUCTA:\n"
+            "- Debes mantener una postura estrictamente respetuosa, educada y profesional ante CUALQUIER situación.\n"
+            "- Si se presentan groserías, insultos, lenguaje vulgar o provocativo, ignora la ofensa por completo "
+            "y responde de forma cortés indicando que eres un asistente profesional enfocado en el análisis técnico.\n"
+            "- Tienes terminantemente prohibido usar groserías, lenguaje inapropiado, palabras ofensivas o sarcasmo.\n\n"
+            "REGLAS OBLIGATORIAS DE RESPUESTA DIRECTA (ANTI-ALUCINACIÓN):\n"
+            "- Habla DIRECTAMENTE conmigo ('Tú / Usted'). Está TERMINANTEMENTE PROHIBIDO usar frases explicativas en tercera persona "
+            "o responder dándome órdenes a mí o al sistema (ejemplo: NO digas 'por favor investiga la pregunta' ni 'verifique si hay información').\n"
+            "- Tu trabajo es redactar la conclusión directamente basada en lo que leíste de la herramienta.\n\n"
+            "REGLAS ESTRUCTURALES DEL FLUJO:\n"
             "REGLA 1: Si el usuario te pregunta sobre algo que YA discutieron o te pide modificar una respuesta anterior (ej. traducir, resumir, comparar), usa ÚNICAMENTE tu memoria de la conversación. NO uses herramientas.\n"
             "REGLA 2: Usa la herramienta 'analizador_de_resenas' SOLO cuando el usuario pregunte por características, quejas o temas nuevos de los que aún no tienes contexto en la memoria.\n"
             "REGLA 3 (REGLA CRÍTICA DE FRONTERA): Si usas la herramienta y devuelve un resultado vacío o sin evidencia, responde EXACTAMENTE con esta frase: 'No se cuenta con registros suficientes en las opiniones indexadas para responder a esta consulta específica.'\n"
@@ -98,8 +118,8 @@ class AsistenteAnaliticoHibrido:
             tools=self.herramientas_agente,
             llm=self.llm,
             memory=memoria_agente,
-            max_iterations=5,
+            max_iterations=2,
             verbose=True,
-            system_prompt=contexto_sistema
+            system_prompt=contexto_sistema      
         )
         return agente

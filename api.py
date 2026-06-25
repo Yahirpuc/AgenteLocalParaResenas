@@ -207,6 +207,8 @@ app.include_router(herramientas_router)
 # ENDPOINTS / RUTAS DE LA API
 # =====================================================================
 
+# ENDPOINT CENTRAL DE CHAT: ENRUTADO SEMÁNTICO GENÉRICO MLOPS
+# =====================================================================
 @app.post("/api/chat")
 async def procesar_conversacion(
     peticion: PeticionMensaje,
@@ -215,17 +217,15 @@ async def procesar_conversacion(
 ):
     session_id = peticion.id_sesion.strip() if peticion.id_sesion else str(uuid.uuid4())[:8]
     
-    # =====================================================================
+    # -----------------------------------------------------------------
     # 🛡️ 1. CAPA DE VALIDACIÓN (GUARDRAILS)
-    # =====================================================================
+    # -----------------------------------------------------------------
     es_seguro, mensaje_bloqueo = validar_prompt_seguro(peticion.mensaje)
     
     if not es_seguro:
-        # Guardamos el intento de ataque en el historial visible para el usuario
         await guardar_mensaje(session_id, 'user', peticion.mensaje, usuario_id=usuario_id)
         await guardar_mensaje(session_id, 'assistant', mensaje_bloqueo, usuario_id=usuario_id)
         
-        # Registramos el evento de seguridad en la tabla de Observabilidad
         await asyncio.to_thread(
             guardar_registro_auditoria,
             session_id=session_id,
@@ -234,32 +234,66 @@ async def procesar_conversacion(
             ttft_ms=0.0,
             total_latency_ms=0.0,
             tokens_per_second=0.0,
-            was_blocked=True,  # 🚨 Marcamos que fue bloqueado
+            was_blocked=True,
             tools_executed=[]
         )
         
-        # Devolvemos el bloqueo inmediatamente usando un generador rápido (Fake streaming)
-        # para respetar la firma de StreamingResponse sin gastar CPU en la IA
         async def generador_bloqueo():
             yield mensaje_bloqueo
             
         return StreamingResponse(generador_bloqueo(), media_type="text/plain", headers={"X-Session-ID": session_id})
 
-    # =====================================================================
-    # 🧠 2. FLUJO NORMAL DEL AGENTE (Si el prompt es seguro)
-    # =====================================================================
+    # -----------------------------------------------------------------
+    # ⚡ 1.5 ENRUTADOR SEMÁNTICO GLOBAL (EVITA PARPADEO Y COSTE EN CHAT CASUAL)
+    # -----------------------------------------------------------------
+    prompt_router = (
+        "Determina de forma estricta e inequívoca el tipo de la siguiente entrada del usuario.\n\n"
+        "REGLAS DE CLASIFICACIÓN:\n"
+        "1. Responde ÚNICAMENTE con la palabra 'CHARLA' si la pregunta es un saludo casual, una despedida, "
+        "un insulto, o si pregunta específicamente sobre tu identidad personal (ej: cómo te llamas, quién te creó, qué eres).\n"
+        "2. Responde ÚNICAMENTE con la palabra 'RAG' si el usuario pregunta sobre cualquier aspecto, característica, "
+        "dimensión o propiedad del producto analizado (incluyendo peso, tamaño, dimensiones, adecuación, "
+        "calidad, fallas, empaque o rendimiento), o si pide un resumen u opinión del mismo.\n\n"
+        f"Entrada del usuario: {peticion.mensaje}\n"
+        "Respuesta:"
+    )
+    
+    decision = str(asistente.llm.complete(prompt_router)).strip().upper()
+    print(f"[ROUTER SEMÁNTICO MLOPS] Clasificación de entrada: {decision}")
+
+    if "CHARLA" in decision:
+        prompt_casual = (
+            "Eres un Analista Técnico De Reseñas. Responde en español de forma directa "
+            "al emisor de manera sumamente corta, educada y servicial. No uses herramientas ni inventes datos.\n"
+            "- Si te preguntan qué puedes hacer, di que eres un analista técnico diseñado para evaluar opiniones de productos y bases vectoriales.\n"
+            "- Si te insultan, deniega el comentario manteniendo el respeto profesional.\n\n"
+            f"Interacción del usuario: {peticion.mensaje}\n"
+            "Respuesta de la IA:"
+        )
+        respuesta_casual = str(asistente.llm.complete(prompt_casual)).strip()
+        
+        # Persistencia obligatoria en SQLite de la interacción casual
+        await guardar_mensaje(session_id, 'user', peticion.mensaje, usuario_id=usuario_id)
+        await guardar_mensaje(session_id, 'assistant', respuesta_casual, usuario_id=usuario_id)
+        
+        async def generador_flash():
+            yield "[[SYS_STREAM_START]]"
+            yield respuesta_casual
+
+        return StreamingResponse(generador_flash(), media_type="text/plain", headers={"X-Session-ID": session_id})
+
+    # -----------------------------------------------------------------
+    # 🧠 2. FLUJO COMPLETO DEL AGENTE (Consultas RAG de Producto)
+    # -----------------------------------------------------------------
     historial_cargado = await cargar_historial(session_id)
     await guardar_mensaje(session_id, 'user', peticion.mensaje, usuario_id=usuario_id)
 
     agente = asistente.iniciar_sesion_agente(historial_cargado=historial_cargado)
 
     async def generador_tokens():
-        # INICIAMOS EL CRONÓMETRO GLOBAL
         tiempo_inicio = time.time()
         tiempo_primer_token = None
         conteo_tokens = 0
-        
-        # === NUEVAS VARIABLES DE ESTADO PARA EL FILTRO ReAct ===
         is_streaming_answer = False
         buffer_texto = ""
         
@@ -269,32 +303,21 @@ async def procesar_conversacion(
             async for evento in manejador.stream_events():
                 nombre_clase = type(evento).__name__
                 
-                # -------------------------------------------------------------
-                # 1. INTERCEPTOR PARA LA UX (Spinner de herramientas)
-                # -------------------------------------------------------------
                 if nombre_clase == "ToolCall":
                     nombre_herramienta = getattr(evento, "tool_name", "herramienta_local")
                     yield f"[[SYS_TOOL:{nombre_herramienta}]]"
                     
-                # -------------------------------------------------------------
-                # 2. FILTRO ReAct Y STREAMING AL FRONTEND
-                # -------------------------------------------------------------
                 elif isinstance(evento, AgentStream):
                     if not is_streaming_answer:
-                        # Acumulamos la "cháchara mental" (Pensamientos y Acciones) en secreto
                         buffer_texto += evento.delta
                         
-                        # Buscamos el marcador de la respuesta final del prompt maestro
                         if "Answer:" in buffer_texto or "Respuesta:" in buffer_texto:
                             is_streaming_answer = True
                             
-                            # AHORA SÍ: El modelo va a empezar a responder.
-                            # Disparamos el cronómetro de telemetría y apagamos el spinner de React.
                             if tiempo_primer_token is None:
                                 tiempo_primer_token = time.time()
                                 yield "[[SYS_STREAM_START]]"
                             
-                            # Extraemos lo que sea que haya generado justo después del "Answer:"
                             separador = "Answer:" if "Answer:" in buffer_texto else "Respuesta:"
                             texto_limpio = buffer_texto.split(separador)[-1].lstrip()
                             
@@ -302,24 +325,18 @@ async def procesar_conversacion(
                                 conteo_tokens += 1
                                 yield texto_limpio
                     else:
-                        # Si ya pasamos la fase de pensamiento, transmitimos cada token normalmente
                         conteo_tokens += 1
                         yield evento.delta
                         
-            # Finaliza la generación y guardamos el mensaje completo en BD
             resultado_final = await manejador
             texto_completo = str(resultado_final)
             await guardar_mensaje(session_id, 'assistant', texto_completo, usuario_id=usuario_id)
 
-            # -------------------------------------------------------------
-            # 3. CÁLCULO DE MÉTRICAS EXACTAS Y GUARDADO DE AUDITORÍA
-            # -------------------------------------------------------------
             tiempo_fin = time.time()
             if tiempo_primer_token:
                 ttft_ms = (tiempo_primer_token - tiempo_inicio) * 1000
                 total_latency_ms = (tiempo_fin - tiempo_inicio) * 1000
                 tiempo_generacion_activa = tiempo_fin - tiempo_primer_token
-                
                 tps = conteo_tokens / tiempo_generacion_activa if tiempo_generacion_activa > 0 else 0
                 
                 await asyncio.to_thread(
@@ -333,10 +350,6 @@ async def procesar_conversacion(
                     was_blocked=False, 
                     tools_executed=[] 
                 )
-
-        except Exception as e:
-            print(f"[API ERROR EN FLUJO] {e}")
-            yield f"\n[Error del Agente: {str(e)}]"
 
         except Exception as e:
             print(f"[API ERROR EN FLUJO] {e}")
