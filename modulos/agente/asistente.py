@@ -33,7 +33,7 @@ class AsistenteAnaliticoHibrido:
             path=ruta_db,
             settings=ChromaSettings(chroma_tenant="default_tenant", chroma_database="default_database", allow_reset=True)
         )
-        self.chroma_collection = self.db_cliente.get_collection(name=nombre_coleccion)
+        self.chroma_collection = self.db_cliente.get_or_create_collection(name=nombre_coleccion)
         self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
         self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
         self.index = VectorStoreIndex.from_vector_store(self.vector_store, storage_context=self.storage_context)
@@ -41,17 +41,26 @@ class AsistenteAnaliticoHibrido:
         # --- NUEVA LÓGICA DE FUSIÓN HÍBRIDA (BM25 + VECTORES) ---
         print("[INFO] Construyendo Nodos en memoria para BM25 (Solo en el arranque)...")
         datos_chroma = self.chroma_collection.get()
+        
         nodos_memoria = [
             TextNode(text=texto, id_=id_doc, metadata=metadato) 
-            for texto, id_doc, metadato in zip(datos_chroma['documents'], datos_chroma['ids'], datos_chroma['metadatas'])
+            for texto, id_doc, metadato in zip(datos_chroma.get('documents', []), datos_chroma.get('ids', []), datos_chroma.get('metadatas', []))
         ]
         
         retriever_vectorial = self.index.as_retriever(similarity_top_k=5)
-        retriever_bm25 = BM25Retriever.from_defaults(nodes=nodos_memoria, similarity_top_k=5)
         
-        # Fusionamos ambos enfoques (Semántico + Léxico)
+        # Validamos si hay nodos antes de crear el BM25
+        if nodos_memoria:
+            retriever_bm25 = BM25Retriever.from_defaults(nodes=nodos_memoria, similarity_top_k=5)
+            lista_retrievers = [retriever_vectorial, retriever_bm25]
+            print("[INFO] Motor Híbrido: Vectorial + BM25 activados.")
+        else:
+            print("[WARN] Colección vacía. BM25 inactivo temporalmente. Iniciando solo con vectorial.")
+            lista_retrievers = [retriever_vectorial]
+        
+        # Fusionamos los enfoques dinámicamente según lo que esté disponible
         fusion_retriever = QueryFusionRetriever(
-            [retriever_vectorial, retriever_bm25],
+            lista_retrievers,
             similarity_top_k=5,
             num_queries=1,
             llm=self.llm,

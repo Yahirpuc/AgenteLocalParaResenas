@@ -16,6 +16,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi import Depends
 from modulos.seguridad.autenticacion import obtener_hash_password, verificar_password, crear_token_acceso, obtener_usuario_actual
 from modulos.rutas.herramientas_api import router as herramientas_router
+from modulos.rutas.producto_api import router as producto_router
 
 from modulos.infraestructura.clientes_sqlite import (
     crear_usuario,
@@ -202,7 +203,7 @@ async def borrar_conversacion(
 # INCLUSIÓN DE RUTAS DE HERRAMIENTAS (Protegidas por autenticación)
 # =====================================================================
 app.include_router(herramientas_router)
-
+app.include_router(producto_router)
 # =====================================================================
 # ENDPOINTS / RUTAS DE LA API
 # =====================================================================

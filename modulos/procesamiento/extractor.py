@@ -52,19 +52,17 @@ class ExtractorEspecifico:
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 
-                print("\n========================================================")
-                print("🛑 ¡PAUSA CONTROLADA DE NAVEGACIÓN MANUAL!")
-                print("1. Ve a la pantalla del navegador.")
-                print("2. IMPORTANTE: Entra a la sección exclusiva de opiniones.")
-                print("   (Dale clic a 'Ver todas las opiniones' o 'Ver más opiniones').")
-                print("3. Asegúrate de que las reseñas extendidas se vean en pantalla.")
-                print("========================================================")
+                print("\n🔄 Esperando a que cargue la página de reseñas automáticamente...")
+                print("⏳ [INFO] Tienes 3 MINUTOS para iniciar sesión o resolver el Captcha manualmente en la ventana...")
                 
-                input("\n⌨️ Presiona [ENTER] aquí en la terminal cuando estés parado en la sección de opiniones...")
-
-                print("\n🔄 Sincronizando e interactuando con los elementos de la página...")
-                page.wait_for_load_state("domcontentloaded")
-                page.wait_for_timeout(1500)
+                try:
+                    # Le damos 180000 ms (3 minutos) para que aparezcan los comentarios
+                    page.wait_for_selector('[data-hook="review"], .ui-review-capability-comments__comment, [class*="comment-container" i]', timeout=180000)
+                    print("✅ Reseñas detectadas en pantalla. ¡Iniciando extracción automática!")
+                    page.wait_for_timeout(2000) 
+                except Exception as e:
+                    print(f"❌ Tiempo agotado. Pasaron los 3 minutos y no se detectaron reseñas.")
+                    return
 
                 # --- INTERACCIÓN ESPECÍFICA PARA MERCADO LIBRE ---
                 if plataforma == "mercadolibre":

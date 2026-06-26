@@ -1,5 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 import asyncio
+import os
+import glob
+import csv
+from fastapi.responses import FileResponse
+import sqlite3
+
+ruta_db = os.path.join("datos", "base_relacional", "historial_sesiones.db")
 
 # Importamos las herramientas físicas
 from modulos.agente.herramientas import (
@@ -44,11 +51,29 @@ async def endpoint_limpiar_cache():
 
 @router.post("/exportar-csv")
 async def endpoint_exportar_csv():
-    """Genera el archivo CSV con los datos limpios y codificación para Excel."""
+    """Genera el archivo CSV y envía los bytes directamente al frontend."""
     resultado = await asyncio.to_thread(exportar_analisis_csv)
+    
     if "[ERROR]" in resultado or "[FALLO]" in resultado:
         raise HTTPException(status_code=400, detail=resultado)
-    return {"estado": "ok", "mensaje": resultado}
+    
+    # 1. Buscamos dónde guardó el archivo tu función. 
+    # Asumo que se guarda en la carpeta 'datos' o 'reportes'.
+    # Buscaremos el CSV más reciente generado en tu proyecto:
+    rutas_posibles = glob.glob("**/*.csv", recursive=True)
+    
+    if not rutas_posibles:
+        raise HTTPException(status_code=404, detail="Se generó el CSV pero no se pudo localizar en el servidor.")
+    
+    # Obtenemos el archivo más nuevo (el que se acaba de crear)
+    archivo_reciente = max(rutas_posibles, key=os.path.getctime)
+    
+    # 2. Retornamos el archivo físicamente
+    return FileResponse(
+        path=archivo_reciente, 
+        filename="Analisis_Resenas.csv", # Este es el nombre por defecto que verá el navegador
+        media_type="text/csv"
+    )
 
 @router.get("/metricas/resumen")
 async def endpoint_metricas_rapidas():
@@ -62,3 +87,28 @@ async def endpoint_metricas_rapidas():
         "distribucion_sentimientos": sentimientos,
         "reseña_destacada": critica
     }
+
+@router.get("/metricas/ultima")
+def obtener_ultima_metrica():
+    try:
+        conn = sqlite3.connect(ruta_db)
+        c = conn.cursor()
+        c.execute('''
+            SELECT user_prompt, ttft_ms, total_latency_ms, tokens_per_second 
+            FROM auditoria 
+            ORDER BY timestamp DESC LIMIT 1
+        ''')
+        registro = c.fetchone()
+        conn.close()
+
+        if not registro:
+            raise HTTPException(status_code=404, detail="Sin registros aún")
+
+        return {
+            "prompt": registro[0],
+            "ttft_ms": registro[1],
+            "total_latency_ms": registro[2],
+            "tokens_per_second": registro[3]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
