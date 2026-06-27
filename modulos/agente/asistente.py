@@ -23,7 +23,7 @@ class AsistenteAnaliticoHibrido:
 
         print("[INFO] Cargando modelos locales en memoria (Ollama)...")
         self.embed_model = OllamaEmbedding(model_name="nomic-embed-text")
-        self.llm = Ollama(model="qwen2.5:1.5b", request_timeout=300.0)
+        self.llm = Ollama(model="qwen2.5:7b", request_timeout=120.0)
 
         LlamaSettings.llm = self.llm
         LlamaSettings.embed_model = self.embed_model

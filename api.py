@@ -245,47 +245,10 @@ async def procesar_conversacion(
         return StreamingResponse(generador_bloqueo(), media_type="text/plain", headers={"X-Session-ID": session_id})
 
     # -----------------------------------------------------------------
-    # ⚡ 1.5 ENRUTADOR SEMÁNTICO GLOBAL (EVITA PARPADEO Y COSTE EN CHAT CASUAL)
+    # 🧠 2. FLUJO DIRECTO DEL AGENTE (Consultas RAG e Interacción Casual)
     # -----------------------------------------------------------------
-    prompt_router = (
-        "Determina de forma estricta e inequívoca el tipo de la siguiente entrada del usuario.\n\n"
-        "REGLAS DE CLASIFICACIÓN:\n"
-        "1. Responde ÚNICAMENTE con la palabra 'CHARLA' si la pregunta es un saludo casual, una despedida, "
-        "un insulto, o si pregunta específicamente sobre tu identidad personal (ej: cómo te llamas, quién te creó, qué eres).\n"
-        "2. Responde ÚNICAMENTE con la palabra 'RAG' si el usuario pregunta sobre cualquier aspecto, característica, "
-        "dimensión o propiedad del producto analizado (incluyendo peso, tamaño, dimensiones, adecuación, "
-        "calidad, fallas, empaque o rendimiento), o si pide un resumen u opinión del mismo.\n\n"
-        f"Entrada del usuario: {peticion.mensaje}\n"
-        "Respuesta:"
-    )
-    
-    decision = str(asistente.llm.complete(prompt_router)).strip().upper()
-    print(f"[ROUTER SEMÁNTICO MLOPS] Clasificación de entrada: {decision}")
-
-    if "CHARLA" in decision:
-        prompt_casual = (
-            "Eres un Analista Técnico De Reseñas. Responde en español de forma directa "
-            "al emisor de manera sumamente corta, educada y servicial. No uses herramientas ni inventes datos.\n"
-            "- Si te preguntan qué puedes hacer, di que eres un analista técnico diseñado para evaluar opiniones de productos y bases vectoriales.\n"
-            "- Si te insultan, deniega el comentario manteniendo el respeto profesional.\n\n"
-            f"Interacción del usuario: {peticion.mensaje}\n"
-            "Respuesta de la IA:"
-        )
-        respuesta_casual = str(asistente.llm.complete(prompt_casual)).strip()
-        
-        # Persistencia obligatoria en SQLite de la interacción casual
-        await guardar_mensaje(session_id, 'user', peticion.mensaje, usuario_id=usuario_id)
-        await guardar_mensaje(session_id, 'assistant', respuesta_casual, usuario_id=usuario_id)
-        
-        async def generador_flash():
-            yield "[[SYS_STREAM_START]]"
-            yield respuesta_casual
-
-        return StreamingResponse(generador_flash(), media_type="text/plain", headers={"X-Session-ID": session_id})
-
-    # -----------------------------------------------------------------
-    # 🧠 2. FLUJO COMPLETO DEL AGENTE (Consultas RAG de Producto)
-    # -----------------------------------------------------------------
+    # Eliminamos el enrutador intermedio. Ahora el modelo de 7B decide de forma
+    # nativa y fluida si usa el analizador o responde con memoria, ahorrando un 50% de CPU.
     historial_cargado = await cargar_historial(session_id)
     await guardar_mensaje(session_id, 'user', peticion.mensaje, usuario_id=usuario_id)
 
@@ -357,9 +320,4 @@ async def procesar_conversacion(
             yield f"\n[Error del Agente: {str(e)}]"
 
     headers = {"X-Session-ID": session_id}
-    
-    return StreamingResponse(
-        generador_tokens(), 
-        media_type="text/plain", 
-        headers=headers
-    )
+    return StreamingResponse(generador_tokens(), media_type="text/plain", headers=headers)

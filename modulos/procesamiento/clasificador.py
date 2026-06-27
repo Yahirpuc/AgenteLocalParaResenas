@@ -5,12 +5,10 @@ import re
 import time
 from llama_index.llms.ollama import Ollama
 
+# Busca el inicio de la clase en clasificador.py:
 class ClasificadorReseñas:
-    def __init__(self, modelo="qwen2.5:1.5b"):
-        """
-        Inicializa el clasificador configurando el modelo local de Ollama
-        con el formato JSON nativo activo para garantizar costo cero.
-        """
+    # Cambia el modelo por defecto a qwen2.5:7b
+    def __init__(self, modelo="qwen2.5:7b"):
         self.llm = Ollama(
             model=modelo, 
             request_timeout=60.0, 
