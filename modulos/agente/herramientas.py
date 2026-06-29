@@ -192,16 +192,26 @@ def obtener_diagnostico_sistema() -> str:
 
 def limpiar_cache_scraping() -> str:
     """
-    Ejecuta un mantenimiento de limpieza preventiva removiendo archivos JSON temporales vacíos o corruptos.
-    
-    Returns:
-        str: Confirmación de la purga técnica realizada en el backend.
+    Ejecuta un mantenimiento de limpieza preventiva removiendo archivos JSON temporales.
     """
     archivo_temporal = os.path.join(DIRECTORIO_SALIDA, "reseñas_crudas.json")
-    if os.path.exists(archivo_temporal):
-        try:
+    archivo_enriquecido = os.path.join(DIRECTORIO_SALIDA, "reseñas_enriquecidas.json") # <--- AGREGA ESTO
+    
+    mensajes = []
+    
+    try:
+        if os.path.exists(archivo_temporal):
             os.remove(archivo_temporal)
-            return f"[MANTENIMIENTO] Cache e historial de recolección cruda en '{DIRECTORIO_SALIDA}' eliminados con éxito."
-        except Exception as e:
-            return f"[ERROR] No se pudo liberar el archivo temporal: {str(e)}"
-    return "[INFO] El cache de scraping ya se encuentra completamente limpio."
+            mensajes.append("Reseñas crudas eliminadas.")
+            
+        if os.path.exists(archivo_enriquecido): # <--- AGREGA ESTA VALIDACIÓN
+            os.remove(archivo_enriquecido)
+            mensajes.append("Métricas y reseñas enriquecidas limpiadas.")
+            
+        if mensajes:
+            return f"Cache liberado: {', '.join(mensajes)}"
+        else:
+            return "El cache ya se encuentra completamente limpio."
+            
+    except Exception as e:
+        return f" No se pudo liberar el archivo temporal: {str(e)}"

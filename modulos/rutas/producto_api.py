@@ -41,35 +41,61 @@ async def cargar_nuevo_producto(peticion: PeticionNuevoProducto, request: Reques
     coleccion_local = "reviews_analizadas"
 
     def ejecutar_pipeline_completo():
-        print("[PIPELINE] 1. Limpiando datos del producto anterior...")
-        if os.path.exists(archivo_crudo): os.remove(archivo_crudo)
-        if os.path.exists(archivo_enriquecido): os.remove(archivo_enriquecido)
+        print("[PIPELINE] 1. Desconectando motor vectorial y liberando hilos...")
         
-        # Intento seguro de borrado con reintentos para Windows
+        # 🚨 PASO DE ORO: Si el asistente existe en la app, matamos sus hilos persistentes
+        asistente_actual = getattr(request.app.state, "asistente", None)
+        if asistente_actual and hasattr(asistente_actual, "db_cliente"):
+            try:
+                asistente_actual.db_cliente._system.stop() # Cierra SQLite y ChromaDB de golpe
+                print("[PIPELINE] Conexión de ChromaDB cerrada de forma segura.")
+            except Exception as ex:
+                print(f"[WARN] No se pudo apagar Chroma explícitamente: {ex}")
+        
+        # Quitamos la referencia y forzamos la limpieza en memoria
+        request.app.state.asistente = None
+        gc.collect() 
+        time.sleep(2.0) # Le damos 2 segundos completos a Windows para liberar los archivos
+
+        print("[PIPELINE] 2. Purgando datos del producto anterior de forma física...")
+        
+        # 🚨 CORRECCIÓN: Ahora borramos los archivos JSON con ciclo de reintentos
+        for archivo in [archivo_crudo, archivo_enriquecido]:
+            if os.path.exists(archivo):
+                for intento in range(3):
+                    try:
+                        os.remove(archivo)
+                        print(f"[PIPELINE] Archivo eliminado con éxito: {archivo}")
+                        break
+                    except PermissionError:
+                        print(f"[PIPELINE] Archivo {archivo} retenido. Reintentando borrado...")
+                        time.sleep(1.0)
+
+        # Intento seguro de borrado de la carpeta completa de ChromaDB
         if os.path.exists(ruta_db_local):
             for intento in range(4):
                 try:
                     shutil.rmtree(ruta_db_local)
-                    print("[PIPELINE] Base vectorial anterior eliminada con éxito.")
+                    print("[PIPELINE] Base vectorial anterior eliminada por completo (ChromaDB purgado).")
                     break
                 except PermissionError:
-                    print(f"[PIPELINE] Archivo bloqueado por Windows. Reintentando ({intento+1}/3)...")
-                    time.sleep(1.5) # Espera y reintenta
+                    print(f"[PIPELINE] Carpeta bloqueada por Windows. Reintentando purga ({intento+1}/4)...")
+                    time.sleep(1.5)
         
-        # Recrear carpetas si no existen
+        # Recrear la estructura de carpetas completamente vacías
         os.makedirs(os.path.join("datos", "crudos"), exist_ok=True)
         os.makedirs(os.path.join("datos", "procesados"), exist_ok=True)
         os.makedirs(ruta_db_local, exist_ok=True)
 
-        print(f"[PIPELINE] 2. Iniciando extracción desde: {url_objetivo}")
+        print(f"[PIPELINE] 3. Iniciando extracción desde: {url_objetivo}")
         extractor = ExtractorEspecifico(archivo_salida=archivo_crudo)
         extractor.extraer(url_objetivo, scrolls=3)
 
-        print("[PIPELINE] 3. Clasificando reseñas extraídas...")
+        print("[PIPELINE] 4. Clasificando reseñas extraídas en paralelo...")
         clasificador = ClasificadorReseñas()
-        clasificador.procesar_pipeline(archivo_entrada=archivo_crudo, archivo_salida=archivo_enriquecido)
+        asyncio.run(clasificador.procesar_pipeline(archivo_entrada=archivo_crudo, archivo_salida=archivo_enriquecido))
 
-        print("[PIPELINE] 4. Indexando nueva base vectorial...")
+        print("[PIPELINE] 5. Indexando nueva base vectorial desde cero...")
         indexador = IndexadorRAG(ruta_db=ruta_db_local, nombre_coleccion=coleccion_local)
         indexador.construir_indice(archivo_enriquecido=archivo_enriquecido)
 

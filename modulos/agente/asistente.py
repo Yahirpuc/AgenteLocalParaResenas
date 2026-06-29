@@ -23,7 +23,13 @@ class AsistenteAnaliticoHibrido:
 
         print("[INFO] Cargando modelos locales en memoria (Ollama)...")
         self.embed_model = OllamaEmbedding(model_name="nomic-embed-text")
-        self.llm = Ollama(model="qwen2.5:7b", request_timeout=120.0)
+        # Antes tenías: self.llm = Ollama(model="qwen2.5:7b", request_timeout=120.0) esta era el modelo base, pero ahora la cambiamos a una versión más instruccional y afinada para seguir órdenes.
+
+        self.llm = Ollama(
+         model="qwen2.5:7b-instruct-q4_K_M", 
+         request_timeout=120.0,
+         additional_kwargs={"options": {"num_predict": 256}} # Limita respuestas largas e innecesarias
+         ) #Esta versión es más cuantificada para seguir órdenes
 
         LlamaSettings.llm = self.llm
         LlamaSettings.embed_model = self.embed_model
@@ -63,7 +69,7 @@ class AsistenteAnaliticoHibrido:
             lista_retrievers,
             similarity_top_k=5,
             num_queries=1,
-            llm=self.llm,
+            llm=None, #Cambie self.llm por None
             mode="reciprocal_rerank"
         )
         
@@ -78,7 +84,8 @@ class AsistenteAnaliticoHibrido:
             metadata=ToolMetadata(
                 name="analizador_de_resenas",
                 description=(
-                    "CRITICAL SEARCH TOOL. Úsala para buscar ABSOLUTAMENTE TODO lo relacionado con los productos: "
+                    "CRITICAL SEARCH TOOL. Úsala para buscar ABSOLUTAMENTE TODO lo relacionado con el producto que estamos analizando: "
+                    
                     "opiniones, quejas, fallas de hardware, durabilidad, rendimiento técnico, estado del empaque, "
                     "logística de envío, problemas de entrega, satisfacción general o cualquier detalle mencionado en las reseñas.\n"
                     "ORDEN DE ENRUTAMIENTO GENÉRICO: Si te estoy saludando, haciendo charla casual, preguntando quién eres "
@@ -101,12 +108,12 @@ class AsistenteAnaliticoHibrido:
         if historial_cargado is None:
             historial_cargado = []
             
-        memoria_agente = ChatMemoryBuffer.from_defaults(chat_history=historial_cargado, token_limit=3000)
+        memoria_agente = ChatMemoryBuffer.from_defaults(chat_history=historial_cargado, token_limit=2000)
         
         # --- PROMPT DEFENSIVO, AUTÓNOMO Y DE CORRECCIÓN DE CONDUCTA ---
-      # --- PROMPT DEFENSIVO, DE CONDUCTA Y CONTROL DE RESPUESTA FINAL ---
+        # --- PROMPT DEFENSIVO, AUTÓNOMO Y DE CORRECCIÓN DE CONDUCTA ---
         contexto_sistema = (
-            "Eres el Analista Técnico Experto oficial de Ordevs Soluciones. Piensa, razona y responde SIEMPRE en Español.\n\n"
+            "Eres el Analista Técnico Experto que analiza opiniones de productos. Piensa, razona y responde SIEMPRE en Español.\n\n"
             "REGLA MÁXIMA DE COMPORTAMIENTO Y CONDUCTA:\n"
             "- Debes mantener una postura estrictamente respetuosa, educada y profesional ante CUALQUIER situación.\n"
             "- Si se presentan groserías, insultos, lenguaje vulgar o provocativo, ignora la ofensa por completo "
@@ -119,7 +126,8 @@ class AsistenteAnaliticoHibrido:
             "REGLAS ESTRUCTURALES DEL FLUJO:\n"
             "REGLA 1: Si el usuario te pregunta sobre algo que YA discutieron o te pide modificar una respuesta anterior (ej. traducir, resumir, comparar), usa ÚNICAMENTE tu memoria de la conversación. NO uses herramientas.\n"
             "REGLA 2: Usa la herramienta 'analizador_de_resenas' SOLO cuando el usuario pregunte por características, quejas o temas nuevos de los que aún no tienes contexto en la memoria.\n"
-            "REGLA 3 (REGLA CRÍTICA DE FRONTERA): Si usas la herramienta y devuelve un resultado vacío o sin evidencia, responde EXACTAMENTE con esta frase: 'No se cuenta con registros suficientes en las opiniones indexadas para responder a esta consulta específica.'\n"
+            "REGLA 3 (REGLA CRÍTICA DE FRONTERA): Si usas la herramienta y devuelve un resultado vacío o sin evidencia absoluta, responde EXACTAMENTE con esta frase: 'No se cuenta con registros suficientes en las opiniones indexadas para responder a esta consulta específica.' "
+            "SIN EMBARGO, no seas excesivamente literal con las palabras clave: si los datos devuelven adjetivos calificativos o sinónimos lógicos relacionados con la duda (por ejemplo, si preguntan por 'peso' y el texto dice que es 'ligero' o 'delgado'), utilízalos inteligentemente para responder de forma afirmativa en lugar de decir que no hay registros.\n"
             "REGLA 4: Nunca inventes características que no existan en los datos recuperados."
         )
 
