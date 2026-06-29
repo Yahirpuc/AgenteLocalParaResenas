@@ -5,6 +5,7 @@ import glob
 import csv
 from fastapi.responses import FileResponse
 import sqlite3
+import json
 
 ruta_db = os.path.join("datos", "base_relacional", "historial_sesiones.db")
 
@@ -77,17 +78,38 @@ async def endpoint_exportar_csv():
 
 @router.get("/metricas/resumen")
 async def endpoint_metricas_rapidas():
-    """Devuelve un resumen estadístico instantáneo para pintar en el Dashboard de React."""
+    """Devuelve un resumen estadístico instantáneo para pintar en el Dashboard de React con el nombre del producto incluido."""
+    
+    # 1. Ejecutamos tus cálculos asíncronos actuales
     promedio = await asyncio.to_thread(calcular_promedio_estrellas)
     sentimientos = await asyncio.to_thread(contar_sentimientos_totales)
     critica = await asyncio.to_thread(obtener_reseña_mas_critica)
     
+    # 2. Extraemos de forma segura el nombre del producto actual desde el JSON
+    producto_nombre = "Ningún producto analizado"
+    archivo_enriquecido = os.path.join("datos", "procesados", "reseñas_enriquecidas.json")
+    
+    if os.path.exists(archivo_enriquecido):
+        try:
+            # Abrimos el archivo en un hilo secundario para no bloquear el bucle de eventos si es muy grande
+            def leer_producto():
+                with open(archivo_enriquecido, "r", encoding="utf-8") as f:
+                    datos = json.load(f)
+                    if datos and len(datos) > 0:
+                        return datos[0].get("producto", "Producto sin nombre asignado")
+                return "Sin datos disponibles"
+            
+            producto_nombre = await asyncio.to_thread(leer_producto)
+        except Exception:
+            producto_nombre = "Error al obtener el nombre del producto"
+
+    # 3. Retornamos todo junto al Frontend de React
     return {
+        "producto": producto_nombre,  # 🚨 NUEVO CAMPO DISPONIBLE EN EL DASHBOARD
         "promedio_estrellas": promedio,
         "distribucion_sentimientos": sentimientos,
         "reseña_destacada": critica
     }
-
 @router.get("/metricas/ultima")
 def obtener_ultima_metrica():
     try:

@@ -42,6 +42,8 @@ from modulos.seguridad.autenticacion import (
 from modulos.seguridad.guardrails import validar_prompt_seguro
 
 
+
+
 @asynccontextmanager
 async def ciclo_vida_api(app: FastAPI):
     print("\n[STARTUP] Inicializando componentes globales del sistema...")
@@ -115,8 +117,8 @@ def obtener_asistente(request: Request) -> AsistenteAnaliticoHibrido:
     return asistente
 
 
-# =====================================================================
-# ENDPOINTS DE AUTENTICACIÓN
+## =====================================================================
+# ENDPOINTS DE AUTENTICACIÓN (CORREGIDOS)
 # =====================================================================
 @app.post("/api/auth/registro", status_code=status.HTTP_201_CREATED)
 async def registrar_usuario(usuario: UsuarioRegistro):
@@ -133,10 +135,9 @@ async def registrar_usuario(usuario: UsuarioRegistro):
 
 @app.post("/api/auth/login", response_model=Token)
 async def iniciar_sesion(credenciales: OAuth2PasswordRequestForm = Depends()):
-    """Verifica credenciales y devuelve un JSON Web Token (JWT)."""
+    """Verifica credenciales y devuelve un JSON Web Token (JWT) enriquecido."""
     
-    # IMPORTANTE: OAuth2PasswordRequestForm siempre usa el campo 'username', 
-    # así que mapeamos tu 'correo' a ese campo.
+    # Mapeamos las credenciales contra la base de datos local
     usuario_db = await asyncio.to_thread(obtener_usuario_por_correo, credenciales.username)
     
     if not usuario_db or not verificar_password(credenciales.password, usuario_db["password_hash"]):
@@ -146,7 +147,14 @@ async def iniciar_sesion(credenciales: OAuth2PasswordRequestForm = Depends()):
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    token_jwt = crear_token_acceso(data={"sub": usuario_db["id"]})
+    # 🚨 CORRECCIÓN AQUÍ: Agregamos el correo al payload sin alterar el sub (UUID)
+    token_jwt = crear_token_acceso(
+        data={
+            "sub": usuario_db["id"],                  # Sigue siendo el UUID para mantener tus relaciones en SQLite
+            "username": usuario_db["correo"]          # 📧 ¡Esto es lo que leerá tu EnvolturaAdmin en React!
+        }
+    )
+    
     return {"access_token": token_jwt, "token_type": "bearer"}
 
 # =====================================================================
@@ -321,3 +329,51 @@ async def procesar_conversacion(
 
     headers = {"X-Session-ID": session_id}
     return StreamingResponse(generador_tokens(), media_type="text/plain", headers=headers)
+
+# =====================================================================
+# ENDPOINT DE PURGA DE HISTORIAL
+# =====================================================================
+@app.delete("/api/usuarios/{usuario_id}/historial/purgar")
+async def purgar_historial_por_perfil(usuario_id: str, token_uid: str = Depends(obtener_usuario_actual)):
+    """
+    Elimina físicamente todas las sesiones y mensajes del perfil de usuario especificado
+    conectándose directamente a la base de datos de SQLite.
+    """
+    import sqlite3
+    import os
+    from fastapi import HTTPException
+    
+    # Declaramos la ruta exacta localmente dentro de la función
+    ruta_db_relacional = os.path.join("datos", "base_relacional", "historial_sesiones.db")
+    
+    try:
+        conn = sqlite3.connect(ruta_db_relacional)
+        conn.execute("PRAGMA foreign_keys = ON;")
+        cursor = conn.cursor()
+        
+        # 1. Consultamos si existen registros vinculados
+        cursor.execute("SELECT COUNT(*) FROM sesiones WHERE usuario_id = ?;", (usuario_id,))
+        total_sesiones = cursor.fetchone()[0]
+        
+        if total_sesiones == 0:
+            conn.close()
+            return {
+                "status": "success", 
+                "message": "El historial de conversaciones de este perfil ya se encuentra limpio."
+            }
+        
+        # 2. Eliminamos las sesiones (El CASCADE configurado limpia la tabla 'mensajes' automáticamente)
+        cursor.execute("DELETE FROM sesiones WHERE usuario_id = ?;", (usuario_id,))
+        conn.commit()
+        conn.close()
+        
+        return {
+            "status": "success", 
+            "message": f"Mantenimiento exitoso. Se eliminaron todas las conversaciones del perfil ({total_sesiones} chats purgados)."
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error crítico en el motor relacional al purgar el historial: {str(e)}"
+        )

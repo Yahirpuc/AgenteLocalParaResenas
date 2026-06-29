@@ -156,7 +156,9 @@ def contar_sentimientos_totales() -> str:
 
 def obtener_reseña_mas_critica() -> str:
     """
-    Filtra y extrae de forma directa la opinión con la menor puntuación y mayor longitud del texto.
+    Filtra y extrae la opinión más severa del producto.
+    Prioriza estrictamente las calificaciones más bajas (1 y 2 estrellas).
+    A falta de estas, busca la menor puntuación disponible y desempata por longitud de texto.
     
     Returns:
         str: El bloque estructurado con la opinión más severa del producto.
@@ -169,11 +171,21 @@ def obtener_reseña_mas_critica() -> str:
             datos = json.load(f)
         if not datos:
             return "[INFO] Listado vacío."
-        peores = [item for item in datos if str(item.get("estrellas")) in ["1", "2"]]
+            
+        # 1. Intentamos filtrar estrictamente las verdaderas negativas (1 y 2 estrellas)
+        peores = [item for item in datos if int(item.get("estrellas", 5)) in [1, 2]]
+        
+        # 2. Si no existen opiniones de 1 o 2 estrellas, usamos todo el universo de datos
         if not peores:
             peores = datos
-        critica = max(peores, key=lambda x: len(x.get("texto", "")))
+            
+        # 🚨 LA CLAVE: Ordenamos con doble criterio de prioridad
+        # - Primero: menor número de estrellas (x["estrellas"] de menor a mayor)
+        # - Segundo: mayor longitud de texto (-len(x["texto"]) de mayor a menor para desempatar)
+        critica = min(peores, key=lambda x: (int(x.get("estrellas", 5)), -len(x.get("texto", ""))))
+        
         return f"=== OPINIÓN MÁS CRÍTICA DETECTADA ===\nAUTOR: {critica.get('autor')}\nESTRELLAS: {critica.get('estrellas')}★\nTEXTO: {critica.get('texto')}"
+        
     except Exception as e:
         return f"[ERROR] Error al aislar la reseña crítica: {str(e)}"
 

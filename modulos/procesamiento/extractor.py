@@ -25,6 +25,10 @@ class ExtractorEspecifico:
         print(f"📊 Archivo generado con éxito en: '{self.archivo_salida}' ({len(datos_existentes)} elementos).")
 
     def extraer(self, url: str, scrolls: int = 3):
+        """
+        Lanza el navegador automatizado con paginación integrada y unificada 
+        tanto para Amazon como para Mercado Libre usando Playwright.
+        """
         print(f"\n🚀 Lanzando navegador automatizado para extracción específica...")
         reseñas_raspadas = []
         ruta_perfil = os.path.join(os.getcwd(), "sesion_playwright")
@@ -56,144 +60,171 @@ class ExtractorEspecifico:
                 print("⏳ [INFO] Tienes 3 MINUTOS para iniciar sesión o resolver el Captcha manualmente en la ventana...")
                 
                 try:
-                    # Le damos 180000 ms (3 minutos) para que aparezcan los comentarios
                     page.wait_for_selector('[data-hook="review"], .ui-review-capability-comments__comment, [class*="comment-container" i]', timeout=180000)
-                    print("✅ Reseñas detectadas en pantalla. ¡Iniciando extracción automática!")
+                    print("✅ Reseñas detectadas en pantalla. ¡Iniciando extracción por páginas!")
                     page.wait_for_timeout(2000) 
-                except Exception as e:
+                except Exception:
                     print(f"❌ Tiempo agotado. Pasaron los 3 minutos y no se detectaron reseñas.")
                     return
 
-                # --- INTERACCIÓN ESPECÍFICA PARA MERCADO LIBRE ---
-                if plataforma == "mercadolibre":
-                    print("[MERCADO LIBRE] Buscando y expandiendo botones 'Leer más' ocultos...")
-                    try:
-                         botones_leer_mas = page.query_selector_all('text="Leer más"')
-                         for boton in botones_leer_mas:
-                             if boton.is_visible():
-                                 boton.click(timeout=1000)
-                                 page.wait_for_timeout(200)
-                         print(f"✨ Se expandieron {len(botones_leer_mas)} comentarios largos.")
-                    except Exception:
-                        pass
-
-                print("\n🔄 Ejecutando scrolls dinámicos de carga profunda...")
-                for i in range(scrolls):
-                    page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
-                    page.wait_for_timeout(2000)
-
-                # --- EXTRACCIÓN MEDIANTE SELECTORES CSS NATIVOS BLINDADOS ---
-                print("[PROCESAMIENTO] Ejecutando consultas estructuradas sobre el DOM...")
-                
-                if plataforma == "amazon":
-                    script_extractor = """
-                    () => {
-                        let data = [];
-                        let bloques = document.querySelectorAll('[data-hook="review"]');
-                        let nodoProducto = document.querySelector('[data-hook="product-link"]');
-
-                        let tituloProducto = nodoProducto 
-                            ? nodoProducto.innerText.trim() 
-                            : document.title.replace(/Amazon.*?:\s*Opiniones de clientes:\s*/i, "").trim();
+                # --- BUCLE UNIFICADO DE PAGINACIÓN AUTOMÁTICA ---
+                # El parámetro 'scrolls' ahora define el número de páginas que va a recorrer el robot
+                for index_pagina in range(scrolls):
+                    
+                    # Si no es la primera página, disparamos el clic en el botón de navegación correspondiente
+                    if index_pagina > 0:
+                        boton_siguiente = None
                         
-                        bloques.forEach((bloque, i) => {
-                            let elAutor = bloque.querySelector('.a-profile-name');
-                            let elTitulo = bloque.querySelector('[data-hook="review-title"]');
-                            let elTexto = bloque.querySelector('[data-hook="review-body"]');
-                            let elEstrellas = bloque.querySelector('.a-icon-alt');
+                        if plataforma == "amazon":
+                            boton_siguiente = page.query_selector('.a-last a')
+                        elif plataforma == "mercadolibre":
+                            boton_siguiente = page.query_selector('.andes-pagination__button--next a, [title="Siguiente"]')
+
+                        if boton_siguiente and boton_siguiente.is_visible():
+                            print(f"➡️ [{plataforma.upper()}] Saltando automáticamente a la página {index_pagina + 1}...")
+                            boton_siguiente.click()
                             
-                            // NUEVOS CAMPOS
-                            let elFecha = bloque.querySelector('[data-hook="review-date"]');
-                            let elVariante = bloque.querySelector('[data-hook="format-strip"]');
-                            let elVerificada = bloque.querySelector('[data-hook="avp-badge"]');
+                            # Esperamos el selector de la nueva tanda dependiendo del sitio
+                            selector_espera = '[data-hook="review"]' if plataforma == "amazon" else '.ui-review-capability-comments__comment, article'
+                            page.wait_for_selector(selector_espera, timeout=25000)
+                            page.wait_for_timeout(2000)
+                        else:
+                            print(f"[INFO] No se encontró el botón 'Siguiente' en la página {index_pagina}. Fin del catálogo.")
+                            break
 
-                            let autor = elAutor ? elAutor.innerText.trim() : "Comprador Anónimo";
-                            let titulo = elTitulo ? elTitulo.innerText.trim() : "Opinión Extraída";
-                            let texto = elTexto ? elTexto.innerText.trim() : "";
-                            let fecha = elFecha ? elFecha.innerText.trim() : "Fecha desconocida";
-                            let variante = elVariante ? elVariante.innerText.trim() : "Versión Estándar";
-                            let verificada = elVerificada ? true : false;
+                    # Interacción específica interna por página
+                    if plataforma == "mercadolibre":
+                        print("[MERCADO LIBRE] Expandiendo textos ocultos 'Leer más' en el lote actual...")
+                        try:
+                            botones_leer_mas = page.query_selector_all('text="Leer más"')
+                            for boton in botones_leer_mas:
+                                if boton.is_visible():
+                                    boton.click(timeout=1000)
+                                    page.wait_for_timeout(1500)
+                        except Exception:
+                            pass
+                    
+                    # Un pequeño scroll hacia abajo por lote para activar cargas dinámicas secundarias en el DOM
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2);")
+                    page.wait_for_timeout(1000)
+
+                    # --- EVALUACIÓN DINÁMICA DEL DOM ---
+                    print(f"[PROCESAMIENTO] Extrayendo lote de opiniones de la página {index_pagina + 1}...")
+                    
+                    if plataforma == "amazon":
+                        script_extractor = """
+                        () => {
+                            let data = [];
+                            let bloques = document.querySelectorAll('[data-hook="review"]');
+                            let nodoProducto = document.querySelector('[data-hook="product-link"]');
+
+                            let tituloProducto = nodoProducto 
+                                ? nodoProducto.innerText.trim() 
+                                : document.title.replace(/Amazon.*?:\s*Opiniones de clientes:\s*/i, "").trim();
                             
-                            if (titulo.includes("de 5 estrellas")) {
-                                titulo = titulo.split("\\n").pop();
-                            }
+                            bloques.forEach((bloque, i) => {
+                                let elAutor = bloque.querySelector('.a-profile-name');
+                                let elTitulo = bloque.querySelector('[data-hook="review-title"]');
+                                let elTexto = bloque.querySelector('[data-hook="review-body"]');
+                                let elEstrellas = bloque.querySelector('.a-icon-alt');
+                                
+                                let elFecha = bloque.querySelector('[data-hook="review-date"]');
+                                let elVariante = bloque.querySelector('[data-hook="format-strip"]');
+                                let elVerificada = bloque.querySelector('[data-hook="avp-badge"]');
 
-                            let estrellas = 5;
-                            if (elEstrellas) {
-                                let match = elEstrellas.innerText.match(/([1-5])/);
-                                if (match) estrellas = parseInt(match[0]);
-                            }
+                                let autor = elAutor ? elAutor.innerText.trim() : "Comprador Anónimo";
+                                let titulo = elTitulo ? elTitulo.innerText.trim() : "Opinión Extraída";
+                                let texto = elTexto ? elTexto.innerText.trim() : "";
+                                let fecha = elFecha ? elFecha.innerText.trim() : "Fecha desconocida";
+                                let variante = elVariante ? elVariante.innerText.trim() : "Versión Estándar";
+                                let verificada = elVerificada ? true : false;
+                                
+                                if (titulo.includes("de 5 estrellas")) {
+                                    titulo = titulo.split("\\n").pop();
+                                }
 
-                            if (texto.length > 5) {
-                                data.push({
-                                    "index": i,
-                                    "producto": tituloProducto, // Nuevo
-                                    "autor": autor,
-                                    "titulo_comentario": titulo,
-                                    "texto": texto,
-                                    "estrellas": estrellas,
-                                    "fecha_original": fecha,    // Nuevo
-                                    "variante": variante,       // Nuevo
-                                    "compra_verificada": verificada // Nuevo
-                                });
-                            }
-                        });
-                        return data;
-                    }
-                    """
-                
-                elif plataforma == "mercadolibre":
-                    script_extractor = """
-                    () => {
-                        let data = [];
-                        let bloques = document.querySelectorAll('.ui-review-capability-comments__comment, [class*="comment-container" i], article');
-                        
-                        let index = 0;
-                        bloques.forEach((bloque) => {
-                            let elTexto = bloque.querySelector('p, .ui-review-capability-comments__comment__content');
-                            if (!elTexto) return;
-                            
-                            let texto = elTexto.innerText.trim();
-                            
-                            let estrellas = 5;
-                            let elEstrellas = bloque.querySelector('[class*="rating" i], [aria-label*="estrellas" i]');
-                            if (elEstrellas) {
-                                let label = elEstrellas.getAttribute('aria-label') || elEstrellas.innerText;
-                                let match = label.match(/([1-5])/);
-                                if (match) estrellas = parseInt(match[0]);
-                            }
+                                let estrellas = 5;
+                                if (elEstrellas) {
+                                    let match = elEstrellas.innerText.match(/([1-5])/);
+                                    if (match) estrellas = parseInt(match[0]);
+                                }
 
-                            let autor = "Comprador de Mercado Libre";
+                                if (texto.length > 5) {
+                                    data.push({
+                                        "index": i,
+                                        "producto": tituloProducto,
+                                        "autor": autor,
+                                        "titulo_comentario": titulo,
+                                        "texto": texto,
+                                        "estrellas": estrellas,
+                                        "fecha_original": fecha,
+                                        "variante": variante,
+                                        "compra_verificada": verificada
+                                    });
+                                }
+                            });
+                            return data;
+                        }
+                        """
+                    
+                    elif plataforma == "mercadolibre":
+                        script_extractor = """
+                        () => {
+                            let data = [];
+                            let bloques = document.querySelectorAll('.ui-review-capability-comments__comment, [class*="comment-container" i], article');
+                            let elTituloProd = document.querySelector('.ui-pdp-title, h1');
+                            let tituloProducto = elTituloProd ? elTituloProd.innerText.trim() : "Producto Mercado Libre";
 
-                            if (texto.length > 5 && !texto.toUpperCase().includes("ÚTIL")) {
-                                data.push({
-                                    "index": index++,
-                                    "autor": autor,
-                                    "titulo_comentario": "Opinión de Mercado Libre",
-                                    "texto": texto,
-                                    "estrellas": estrellas
-                                });
-                            }
-                        });
-                        return data;
-                    }
-                    """
+                            bloques.forEach((bloque, i) => {
+                                let elTexto = bloque.querySelector('p, .ui-review-capability-comments__comment__content');
+                                if (!elTexto) return;
+                                
+                                let texto = elTexto.innerText.trim();
+                                
+                                let estrellas = 5;
+                                let elEstrellas = bloque.querySelector('[class*="rating" i], [aria-label*="estrellas" i]');
+                                if (elEstrellas) {
+                                    let label = elEstrellas.getAttribute('aria-label') || elEstrellas.innerText;
+                                    let match = label.match(/([1-5])/);
+                                    if (match) estrellas = parseInt(match[0]);
+                                }
 
-                opiniones_detectadas = page.evaluate(script_extractor)
+                                let autor = "Comprador de Mercado Libre";
 
-                for op in opiniones_detectadas:
-                    reseñas_raspadas.append({
-                        "id": f"{plataforma}_{datetime.now().strftime('%M%S')}_{op['index']}",
-                        "producto": op.get("producto", "Producto Desconocido"),
-                        "autor": op["autor"],
-                        "titulo_comentario": op["titulo_comentario"],
-                        "texto": op["texto"],
-                        "estrellas": op["estrellas"],
-                        "variante": op.get("variante", ""),
-                        "compra_verificada": op.get("compra_verificada", False),
-                        "fuente": url,
-                        "fecha_publicacion": op.get("fecha_original", "") 
-                    })
+                                if (texto.length > 5 && !texto.toUpperCase().includes("ÚTIL")) {
+                                    data.push({
+                                        "index": i,
+                                        "producto": tituloProducto,
+                                        "autor": autor,
+                                        "titulo_comentario": "Opinión de Mercado Libre",
+                                        "texto": texto,
+                                        "estrellas": estrellas
+                                    });
+                                }
+                            });
+                            return data;
+                        }
+                        """
+
+                    # Evaluamos e inyectamos el lote actual obtenido de esta página al arreglo global
+                    opiniones_lote = page.evaluate(script_extractor)
+                    
+                    for op in opiniones_lote:
+                        reseñas_raspadas.append({
+                            "id": f"{plataforma}_{datetime.now().strftime('%M%S')}_{index_pagina}_{op['index']}",
+                            "producto": op.get("producto", "Producto Desconocido"),
+                            "autor": op["autor"],
+                            "titulo_comentario": op["titulo_comentario"],
+                            "texto": op["texto"],
+                            "estrellas": op["estrellas"],
+                            "variante": op.get("variante", ""),
+                            "compra_verificada": op.get("compra_verificada", False),
+                            "fuente": url,
+                            "fecha_publicacion": op.get("fecha_original", "") 
+                        })
+
+                    # Pausa estratégica para evitar que los servidores nos identifiquen como ráfaga automatizada
+                    page.wait_for_timeout(1500)
 
             except Exception as e:
                 print(f"❌ Error crítico durante la extracción estructurada: {e}")
@@ -202,6 +233,7 @@ class ExtractorEspecifico:
 
         if reseñas_raspadas:
             self._guardar_json(reseñas_raspadas)
+            print(f"🎉 Extracción masiva terminada. Catálogo finalizado con {len(reseñas_raspadas)} opiniones guardadas de forma unificada.")
         else:
             print("⚠️ [ADVERTENCIA] No se capturaron reseñas. Asegúrate de estar parado en la página de comentarios completa.")
 
