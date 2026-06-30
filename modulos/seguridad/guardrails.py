@@ -24,10 +24,10 @@ def validar_prompt_seguro(prompt_usuario: str) -> tuple[bool, str]:
     for patron in PATRONES_PROHIBIDOS:
         if patron in prompt_limpio:
             # Si detectamos una amenaza, devolvemos False y un mensaje genérico
-            return False, "[ALERTA DE SEGURIDAD] La solicitud contiene patrones no permitidos y ha sido bloqueada."
+            return False, "La solicitud contiene patrones no permitidos y ha sido bloqueada."
             
     # Validación de longitud (para evitar ataques de denegación de servicio / saturación de RAM)
     if len(prompt_limpio) > 1000:
-        return False, "[ALERTA] El texto excede la longitud máxima permitida (1000 caracteres)."
+        return False, "El texto excede la longitud máxima permitida (1000 caracteres)."
 
     return True, "OK"

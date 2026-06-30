@@ -105,6 +105,10 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
+class UsuarioRegistro(BaseModel):
+    correo: str
+    contrasena: str
+
 # DEPENDENCIA DEL ASISTENTE
 def obtener_asistente(request: Request) -> AsistenteAnaliticoHibrido:
     """Extrae la instancia del asistente del estado global de forma segura."""
@@ -120,6 +124,24 @@ def obtener_asistente(request: Request) -> AsistenteAnaliticoHibrido:
 ## =====================================================================
 # ENDPOINTS DE AUTENTICACIÓN (CORREGIDOS)
 # =====================================================================
+@app.post("/registro", status_code=status.HTTP_201_CREATED)
+def registrar_usuario(datos: UsuarioRegistro):
+    # 1. Encriptar la contraseña (usando tu función de autenticacion.py)
+    password_hash = obtener_hash_password(datos.contrasena)
+    
+    # 2. Guardar en SQLite (usando tu función de clientes_sqlite.py)
+    nuevo_id = crear_usuario(datos.correo, password_hash)
+    
+    if not nuevo_id:
+        # Si devuelve None, es porque el UNIQUE del correo falló
+        raise HTTPException(
+            status_code=400, 
+            detail="El correo ya está registrado"
+        )
+        
+    return {"mensaje": "Usuario creado exitosamente", "id": nuevo_id}
+
+
 @app.post("/api/auth/registro", status_code=status.HTTP_201_CREATED)
 async def registrar_usuario(usuario: UsuarioRegistro):
     """Registra un nuevo usuario encriptando su contraseña."""
